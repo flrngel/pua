@@ -12,12 +12,10 @@ public final class DeviceFeed: @unchecked Sendable {
 
     private let source: SampleRing
     private var unit: AudioUnit?
-    private let silence = UnsafeMutablePointer<Float>.allocate(capacity: 16_384)
 
     public init(device: AudioDevice, source: SampleRing) {
         self.device = device
         self.source = source
-        silence.initialize(repeating: 0, count: 16_384)
     }
 
     public func start() throws {
@@ -78,8 +76,5 @@ public final class DeviceFeed: @unchecked Sendable {
         }
     }
 
-    deinit {
-        stop()
-        silence.deallocate()
-    }
+    deinit { stop() }
 }
