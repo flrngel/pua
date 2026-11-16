@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.1.5"
+let version = "0.1.6"
 
 let usage = """
 pua \(version): tunnel iPhone (Continuity) calls on a Mac to an agent
@@ -19,6 +19,7 @@ Setup and status
 Calls
   pua call state [--watch]        idle | incoming | active (+ caller, timer)
   pua call dial NUMBER [--via shortcut|tel] [--shortcut NAME]
+  pua call wait-connected [--timeout S]  block until the current call connects (callservicesd log)
   pua call answer [--caller NUMBER] [--wait SECONDS]
   pua call decline | hangup
   pua ui-dump [--app BUNDLE_ID]   AX tree of call UI, for calibrating labels during a live call
@@ -140,6 +141,14 @@ do {
             }
             printJSON(["ok": true, "submitted": true, "via": via,
                        "observed": observed?.json ?? CallControl.snapshot().json])
+        case "wait-connected":
+            // Prints a line once attached, so a script can dial after it.
+            let timeout = args.value("--timeout").flatMap(Double.init) ?? 120
+            let result = CallControl.waitForConnection(timeout: timeout) {
+                Events.shared.emit("listening", [:])
+            }
+            printJSON(["ok": result == "connected", "state": result ?? "timeout"])
+            if result != "connected" { exit(1) }
         case "answer":
             let caller = args.value("--caller")
             if let wait = args.value("--wait").flatMap(Double.init) {

@@ -152,6 +152,48 @@ public enum CallControl {
         return nil
     }
 
+    /// Waits for callservicesd to log that the relayed call connected or ended. On the Mac every
+    /// cellular call is a relay call, and the host iPhone sends `CallConnected` when the far end
+    /// answers. Unlike the call UI (whose timer is not exposed to AX), this is language-independent.
+    /// Returns "connected", "ended", or nil on timeout. `ready` runs once the log stream is attached.
+    public static func waitForConnection(timeout: TimeInterval, ready: (() -> Void)? = nil) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+        p.arguments = ["stream", "--style", "compact", "--predicate",
+                       #"process == "callservicesd" AND (eventMessage CONTAINS "CallConnected message" OR eventMessage CONTAINS "with disconnected call")"#]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        defer { if p.isRunning { p.terminate() } }
+        let lock = NSLock()
+        var result: String?
+        var pending = ""
+        let done = DispatchSemaphore(value: 0)
+        let attached = DispatchSemaphore(value: 0)
+        pipe.fileHandleForReading.readabilityHandler = { h in
+            let data = h.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            lock.lock(); defer { lock.unlock() }
+            pending += text
+            var lines = pending.components(separatedBy: "\n")
+            pending = lines.removeLast()
+            for line in lines {
+                // The stream echoes the predicate in a header; only timestamped lines are events.
+                guard let first = line.first, first.isNumber else { attached.signal(); continue }
+                guard result == nil else { continue }
+                if line.contains("CallConnected message") { result = "connected"; done.signal() }
+                else if line.contains("with disconnected call") { result = "ended"; done.signal() }
+            }
+        }
+        _ = attached.wait(timeout: .now() + 3)
+        ready?()
+        _ = done.wait(timeout: .now() + timeout)
+        pipe.fileHandleForReading.readabilityHandler = nil
+        lock.lock(); defer { lock.unlock() }
+        return result
+    }
+
     /// Polls until `state` is reached or the timeout passes.
     public static func wait(for state: State, timeout: TimeInterval) -> Snapshot? {
         let deadline = Date().addingTimeInterval(timeout)
