@@ -26,7 +26,7 @@ make                                                    # CLI + driver (ad-hoc s
 make driver SIGN_IDENTITY="Developer ID Application"    # recommended: sign the driver with your identity
 sudo scripts/install-driver.sh                          # installs PUA Call Mic, restarts coreaudiod
 .build/release/pua permissions                          # Accessibility for this terminal
-.build/release/pua shortcut install                     # import "PUA Dial" into Shortcuts
+.build/release/pua shortcut install                     # build, sign and import "PUA Dial" (AX presses Add Shortcut)
 .build/release/pua doctor                               # every prerequisite with its next action
 .build/release/pua selftest                             # proves both audio legs without a call
 ```

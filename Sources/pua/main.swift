@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.1.0"
+let version = "0.1.1"
 
 let usage = """
 pua \(version): tunnel iPhone (Continuity) calls on a Mac to an agent
@@ -13,7 +13,7 @@ Setup and status
   pua devices                     Core Audio devices (JSON)
   pua processes                   Core Audio client processes; find the call renderer during a call
   pua selftest                    prove the tap (downlink) and PUA Call Mic (uplink) legs, no call needed
-  pua shortcut install [--name N] build, sign and open the "PUA Dial" shortcut for import
+  pua shortcut install [--name N] build, sign and import the "PUA Dial" shortcut
 
 Calls
   pua call state [--watch]        idle | incoming | active (+ caller, timer)
@@ -98,9 +98,9 @@ do {
         let name = args.value("--name") ?? Dialer.defaultShortcutName
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/pua")
         let file = try Dialer.buildShortcut(name: name, in: dir)
-        let opened = args.flag("--no-open") ? false : NSWorkspace.shared.open(file)
-        printJSON(["ok": true, "file": file.path, "opened": opened,
-                   "next": "confirm 'Add Shortcut' in Shortcuts; the first dial asks to allow the Call action"])
+        if !args.flag("--no-import") { try Dialer.importShortcut(file, name: name) }
+        printJSON(["ok": true, "file": file.path, "installed": Dialer.shortcutInstalled(name),
+                   "next": "the first dial asks to allow the Call action once"])
 
     case "call":
         switch args.next() {

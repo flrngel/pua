@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 /// Outbound calls. The default path runs an Apple Shortcut that wraps the Phone "Call" action
@@ -61,6 +62,43 @@ public enum Dialer {
         guard let url = URL(string: "tel:\(number)"), NSWorkspace.shared.open(url) else {
             throw PuaError("open_failed", "could not open tel: URL")
         }
+    }
+
+    // MARK: - Import
+
+    static let addShortcutLabels: Set<String> = ["Add Shortcut", "단축어 추가"]
+
+    /// Opens the signed file in Shortcuts and presses "Add Shortcut" through Accessibility, then
+    /// confirms with `shortcuts list`. Quits Shortcuts afterwards if it was not already running.
+    public static func importShortcut(_ file: URL, name: String = defaultShortcutName, timeout: TimeInterval = 20) throws {
+        if shortcutInstalled(name) { return }
+        guard AX.isTrusted else { throw PuaError("accessibility_required", "grant Accessibility, or open \(file.path) and click Add Shortcut") }
+        let bundleID = "com.apple.shortcuts"
+        let wasRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+        defer {
+            if !wasRunning { NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.terminate() }
+        }
+        guard NSWorkspace.shared.open(file) else { throw PuaError("open_failed", "could not open \(file.path)") }
+        let deadline = Date().addingTimeInterval(timeout)
+        var pressed = false
+        while Date() < deadline, !pressed {
+            usleep(300_000)
+            guard let app = AX.app(bundleID: bundleID) else { continue }
+            for window in AX.windows(app) {
+                var button: AXUIElement?
+                AX.walk(window, maxDepth: 8) { el, _ in
+                    if AX.role(el) == kAXButtonRole, addShortcutLabels.contains(AX.label(el)) { button = el; return false }
+                    return true
+                }
+                if let button, AX.press(button) { pressed = true; break }
+            }
+        }
+        guard pressed else { throw PuaError("import_timeout", "Add Shortcut button not found; open \(file.path) manually") }
+        for _ in 0..<20 {
+            usleep(250_000)
+            if shortcutInstalled(name) { return }
+        }
+        throw PuaError("import_unconfirmed", "pressed Add Shortcut but '\(name)' is not listed yet")
     }
 
     // MARK: - Shortcut generation
