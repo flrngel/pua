@@ -115,9 +115,28 @@ public enum PhoneRoute {
 
     // MARK: - Journal
 
+    /// Launches the Phone app in the background if needed and waits until its Audio menu
+    /// can be read (right after launch the menu bar is not populated yet).
+    @discardableResult
+    public static func ensureReady(timeout: TimeInterval = 10) throws -> Menu {
+        if NSRunningApplication.runningApplications(withBundleIdentifier: CallControl.phoneBundleID).isEmpty,
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: CallControl.phoneBundleID) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = false
+            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in }
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastError: Error = PuaError("phone_not_running", "Phone app did not start")
+        while Date() < deadline {
+            do { return try read() } catch { lastError = error }
+            usleep(250_000)
+        }
+        throw lastError
+    }
+
     /// Saves the current selections (once) and routes the Phone microphone to `micName`.
     public static func setup(micName: String) throws -> [String: Any] {
-        let menu = try read()
+        let menu = try ensureReady()
         if !FileManager.default.fileExists(atPath: journalURL.path) {
             let journal: [String: String] = [
                 "microphone": menu.selected(.microphone).map { $0.identifier == "use_system_setting" ? "system" : $0.title } ?? "system",
