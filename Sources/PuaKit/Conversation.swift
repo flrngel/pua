@@ -62,7 +62,10 @@ public final class Conversation: @unchecked Sendable {
     private var started = Date()
     private var stopReason: String?
     private var fedSeconds: Double = 0
-    private var lastVoice = Date.distantPast
+    private var lastVoice = Date.distantPast   // voice energy or new words: keeps the turn open
+    private var lastSound = Date.distantPast   // voice energy only: end of speech, for latency
+    private var soundOnset: Double?            // start of the latest burst of caller voice
+    private var turnStart: Double?             // when the caller's current turn began
     private var consumedUntil: Double = 0
     private var finals: [String] = []
     private var volatileText = ""
@@ -157,15 +160,20 @@ public final class Conversation: @unchecked Sendable {
                     if Date().timeIntervalSince(idleSince!) >= 2 { stop("call_ended"); break }
                 }
             }
-            let (text, heardAt, endOfTurn) = locked { () -> (String, Date, Bool) in
+            let (text, heardAt, endOfTurn, startedAt) = locked { () -> (String, Date, Bool, Double?) in
                 let text = (finals + [volatileText]).joined(separator: " ").trimmingCharacters(in: .whitespaces)
-                let end = !text.isEmpty && Date().timeIntervalSince(lastVoice) >= options.endOfTurnSilence
-                if end { consumedUntil = fedSeconds; finals = []; volatileText = "" }
-                return (text, lastVoice, end)
+                // A trailing unfinalized phrase without end punctuation ("I just want to, um")
+                // usually means the caller is still thinking: give them a little longer.
+                let open = !volatileText.isEmpty && !".?!".contains(volatileText.last ?? ".")
+                let silence = open ? max(options.endOfTurnSilence, 1.3) : options.endOfTurnSilence
+                let end = !text.isEmpty && Date().timeIntervalSince(lastVoice) >= silence
+                let start = turnStart
+                if end { consumedUntil = fedSeconds; finals = []; volatileText = ""; turnStart = nil }
+                return (text, lastSound == .distantPast ? lastVoice : lastSound, end, start)
             }
             guard endOfTurn else { continue }
 
-            record(speaker: "caller", text: text, extra: [:])
+            record(speaker: "caller", text: text, extra: [:], at: startedAt)
             let hangup = await respond(to: text, session: &session2, heardAt: heardAt)
             if hangup {
                 if options.hangUpWhenDone, let source = try? CallControl.perform(.hangup) {
@@ -226,7 +234,12 @@ public final class Conversation: @unchecked Sendable {
             lock.lock()
             callerTrack.append(contentsOf: samples)
             fedSeconds += Double(chunk) / 48_000
-            if rms > 0.004, !agentSpeaking { lastVoice = Date() }
+            if rms > 0.004, !agentSpeaking {
+                let now = Date()
+                if now.timeIntervalSince(lastSound) > 0.5 { soundOnset = now.timeIntervalSince(started) }
+                lastVoice = now
+                lastSound = now
+            }
             lock.unlock()
 
             guard let inBuf = AVAudioPCMBuffer(pcmFormat: tapFormat, frameCapacity: AVAudioFrameCount(chunk)),
@@ -249,11 +262,16 @@ public final class Conversation: @unchecked Sendable {
 
     private func handle(result r: SpeechTranscriber.Result) {
         let text = String(r.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
-        let start = r.range.start.seconds
+        let end = r.range.end.seconds
         lock.lock(); defer { lock.unlock() }
-        // Drop speech already answered, and anything heard while the agent talks.
-        guard !agentSpeaking, start.isFinite, start >= consumedUntil - 0.05 else { return }
-        if !text.isEmpty { lastVoice = Date() }
+        // Drop speech already answered and results delivered while the agent talks. Keep a phrase
+        // that runs past the boundary in full: callers often answer the instant the agent stops.
+        guard !agentSpeaking, end.isFinite, end > consumedUntil + 0.1 else { return }
+        if !text.isEmpty {
+            lastVoice = Date()
+            // Recognizer ranges include leading silence; the voice onset is when they began.
+            if turnStart == nil { turnStart = soundOnset ?? elapsed() }
+        }
         if r.isFinal {
             if !text.isEmpty { finals.append(text) }
             volatileText = ""
@@ -328,14 +346,18 @@ public final class Conversation: @unchecked Sendable {
             extra["latency_s"] = latency
             locked { latencies.append(latency) }
         }
-        record(speaker: "agent", text: spoken.joined(separator: " "), extra: extra)
+        record(speaker: "agent", text: spoken.joined(separator: " "), extra: extra,
+               at: firstAudio.map { $0.timeIntervalSince(started) })
         locked {
             agentSpeaking = false
-            // Far-end echo of the agent's last words can arrive a few hundred ms after playback.
-            consumedUntil = fedSeconds + 0.4
+            // No echo margin: the iPhone cancels the agent's voice (live: caller track silent
+            // while the agent spoke), and a margin dropped answers given right after a question.
+            consumedUntil = fedSeconds
             finals = []
             volatileText = ""
             lastVoice = .distantPast
+            lastSound = .distantPast
+            turnStart = nil
         }
     }
 
@@ -353,8 +375,9 @@ public final class Conversation: @unchecked Sendable {
         return (s.trimmingCharacters(in: .whitespacesAndNewlines), hangup)
     }
 
-    private func record(speaker: String, text: String, extra: [String: Any]) {
-        var entry: [String: Any] = ["t": (elapsed() * 10).rounded() / 10, "speaker": speaker, "text": text]
+    /// `at`: when the turn started, in seconds since the conversation began (default: now).
+    private func record(speaker: String, text: String, extra: [String: Any], at: Double? = nil) {
+        var entry: [String: Any] = ["t": ((at ?? elapsed()) * 10).rounded() / 10, "speaker": speaker, "text": text]
         entry.merge(extra) { a, _ in a }
         locked { transcript.append(entry) }
         events.emit(speaker == "caller" ? "heard" : "said", entry)
