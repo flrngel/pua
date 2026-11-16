@@ -51,9 +51,11 @@ public enum Doctor {
 
         if trusted, phoneRunning, let status = try? PhoneRoute.status() {
             let current = status["microphone"] as? String ?? "?"
-            let routed = mic != nil && current == mic!.name
-            checks.append(Check(name: "phone_mic_route", ok: routed, detail: "Phone microphone: \(current)",
-                                action: routed ? nil : "pua route setup (or pass --route to audio-stream)"))
+            let listed = mic.map { (status["microphones"] as? [String] ?? []).contains($0.name) } ?? false
+            // Informational: `audio-stream --route` selects PUA Call Mic per call and restores afterwards.
+            checks.append(Check(name: "phone_mic_route", ok: listed,
+                                detail: "Phone microphone: \(current); PUA Call Mic \(listed ? "listed" : "not listed")",
+                                action: listed ? nil : "install the driver, then reopen Phone"))
         }
 
         let call = CallControl.snapshot()
