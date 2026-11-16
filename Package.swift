@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "pua",
-    platforms: [.macOS("14.2")],
+    platforms: [.macOS("26.0")],
     products: [.executable(name: "pua", targets: ["pua"])],
     targets: [
         .target(
@@ -13,6 +13,9 @@ let package = Package(
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("Speech"),
+                .linkedFramework("FoundationModels"),
             ]
         ),
         .executableTarget(name: "pua", dependencies: ["PuaKit"]),

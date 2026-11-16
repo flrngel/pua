@@ -12,6 +12,8 @@ public final class DeviceFeed: @unchecked Sendable {
 
     private let source: SampleRing
     private var unit: AudioUnit?
+    /// Receives a copy of every rendered frame (silence included), e.g. for recording.
+    public var monitor: SampleRing?
 
     public init(device: AudioDevice, source: SampleRing) {
         self.device = device
@@ -64,6 +66,7 @@ public final class DeviceFeed: @unchecked Sendable {
             underrunFrames &+= UInt64(frames - got)
             (out + got).update(repeating: 0, count: frames - got)
         }
+        monitor?.write(out, frames)
         return noErr
     }
 

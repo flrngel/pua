@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.2.1"
+let version = "0.3.0"
 
 let usage = """
 pua \(version): tunnel iPhone (Continuity) calls on a Mac to an agent
@@ -29,6 +29,10 @@ Audio route (Phone app Audio menu)
   pua route status | setup [--mic NAME] | restore
 
 Duplex audio (stdin PCM16 LE 48 kHz mono → caller; stdout ← caller; stderr JSONL)
+  pua converse [--dial NUMBER] [--route] [--record DIR] [--tts elevenlabs|system] [--voice ID]
+               [--instructions TEXT | --instructions-file F] [--greeting TEXT | --no-greeting]
+               [--max-seconds N] [--end-silence S] [--no-hangup] [--no-call-guard] [--pid PID]
+                                  AI conversation on the call (on-device STT + Apple Foundation Models)
   pua audio-stream [--route] [--monitor] [--max-seconds N] [--stop-after-playback]
                    [--process BUNDLE_ID | --pid PID ...] [--no-call-guard]
                    [--capture-only | --playback-only]
@@ -204,6 +208,68 @@ do {
         case "restore": printJSON(try PhoneRoute.restore())
         default: print(usage); exit(64)
         }
+
+    case "converse":
+        // AI conversation over the call: on-device STT + Foundation Models, ElevenLabs or system TTS.
+        var o = Conversation.Options()
+        if let f = args.value("--instructions-file") { o.instructions = try String(contentsOfFile: f, encoding: .utf8) }
+        if let i = args.value("--instructions") { o.instructions = i }
+        if args.flag("--no-greeting") { o.greeting = nil } else if let g = args.value("--greeting") { o.greeting = g }
+        let key = ProcessInfo.processInfo.environment["ELEVENLABS_API_KEY"]
+        switch args.value("--tts") ?? (key == nil ? "system" : "elevenlabs") {
+        case "elevenlabs":
+            guard let key, !key.isEmpty else { throw PuaError("elevenlabs_key_missing", "set ELEVENLABS_API_KEY or use --tts system") }
+            o.voice = .elevenLabs(apiKey: key, voiceID: args.value("--voice") ?? "cgSgspJ2msm6clMCkdW9",
+                                  model: args.value("--tts-model") ?? "eleven_flash_v2_5")
+        default:
+            o.voice = .system(identifier: args.value("--voice"))
+        }
+        if let p = args.value("--process") { o.bundleID = p }
+        o.pids = args.values("--pid").compactMap { pid_t($0) }
+        if let d = args.value("--record") { o.recordDirectory = URL(fileURLWithPath: d) }
+        if let s = args.value("--max-seconds").flatMap(Double.init) { o.maxSeconds = s }
+        if let s = args.value("--end-silence").flatMap(Double.init) { o.endOfTurnSilence = s }
+        o.callGuard = !args.flag("--no-call-guard")
+        o.hangUpWhenDone = !args.flag("--no-hangup")
+        let dial = args.value("--dial")
+        let route = args.flag("--route") || dial != nil
+        if route {
+            Events.shared.emit("route", try PhoneRoute.setup(micName: "PUA Call Mic"))
+        }
+        defer { if route { Events.shared.emit("route_restored", (try? PhoneRoute.restore()) ?? [:]) } }
+        if let number = dial {
+            let ready = DispatchSemaphore(value: 0)
+            let done = DispatchSemaphore(value: 0)
+            var connected: String?
+            Thread {
+                connected = CallControl.waitForConnection(timeout: 120) { ready.signal() }
+                done.signal()
+            }.start()
+            _ = ready.wait(timeout: .now() + 3)
+            try Dialer.dialViaShortcut(number)
+            Events.shared.emit("dialed")
+            while done.wait(timeout: .now() + 0.25) == .timedOut {
+                if let notice = CallControl.relayUnavailableNotice(dismiss: true) {
+                    throw PuaError("iphone_calls_unavailable", notice)
+                }
+            }
+            guard connected == "connected" else { throw PuaError("not_connected", "call \(connected ?? "timed out") before answer") }
+            Events.shared.emit("connected")
+        }
+        let conversation = Conversation(options: o)
+        signal(SIGINT, SIG_IGN)
+        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        sigint.setEventHandler { conversation.stop("interrupted") }
+        sigint.resume()
+        final class Box: @unchecked Sendable { var summary: [String: Any]?; var error: Error?; var done = false }
+        let box = Box()
+        Task {
+            do { box.summary = try await conversation.run() } catch { box.error = error }
+            box.done = true
+        }
+        while !box.done { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        if let error = box.error { throw error }
+        printJSON(box.summary ?? [:])
 
     case "audio-stream":
         var o = AudioStreamSession.Options()
