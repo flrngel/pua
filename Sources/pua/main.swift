@@ -1,8 +1,9 @@
+import ApplicationServices
 import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.1.2"
+let version = "0.1.3"
 
 let usage = """
 pua \(version): tunnel iPhone (Continuity) calls on a Mac to an agent
@@ -21,6 +22,7 @@ Calls
   pua call answer [--caller NUMBER] [--wait SECONDS]
   pua call decline | hangup
   pua ui-dump [--app BUNDLE_ID]   AX tree of call UI, for calibrating labels during a live call
+  pua ui-press --app BUNDLE_ID --label L [--label L2]  press a visible button by label
 
 Audio route (Phone app Audio menu)
   pua route status | setup [--mic NAME] | restore
@@ -151,6 +153,25 @@ do {
             guard let app = AX.app(bundleID: id) else { print("(not running)"); continue }
             for w in AX.windows(app) { print(AX.dump(w)) }
         }
+
+    case "ui-press":
+        // Presses the first button whose label is one of --label (in order of preference).
+        guard let id = args.value("--app") else { print(usage); exit(64) }
+        let wanted = args.values("--label")
+        guard !wanted.isEmpty else { print(usage); exit(64) }
+        guard let app = AX.app(bundleID: id) else { printJSON(["ok": false, "reason": "not_running", "app": id]); exit(1) }
+        var found: [String: AXUIElement] = [:]
+        for w in AX.windows(app) {
+            AX.walk(w, maxDepth: 10) { el, _ in
+                let label = AX.label(el)
+                if AX.role(el) == kAXButtonRole, wanted.contains(label), found[label] == nil { found[label] = el }
+                return true
+            }
+        }
+        guard let label = wanted.first(where: { found[$0] != nil }), AX.press(found[label]!) else {
+            printJSON(["ok": false, "reason": "no_button", "app": id]); exit(1)
+        }
+        printJSON(["ok": true, "app": id, "pressed": label])
 
     case "route":
         switch args.next() {
