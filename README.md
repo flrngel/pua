@@ -9,7 +9,7 @@ How and why it works this way: [ANALYSIS.md](ANALYSIS.md) (the mechanism, with e
 
 ```
 iPhone ─Continuity─▶ avconferenced ──process tap (muted)──▶ pua stdout  (PCM16 48k mono: caller)
-                      Phone.app mic ◀── PUA Call Mic ◀──────  pua stdin   (PCM16 48k mono: you/agent)
+                      Phone.app mic ◀── PUA Call Mic ◀ PUA Call Feed ◀── pua stdin (PCM16 48k mono: you/agent)
 ```
 
 ## Requirements
@@ -24,7 +24,7 @@ iPhone ─Continuity─▶ avconferenced ──process tap (muted)──▶ pua 
 ```sh
 make                                                    # CLI + driver (ad-hoc signed)
 make driver SIGN_IDENTITY="Developer ID Application"    # recommended: sign the driver with your identity
-sudo scripts/install-driver.sh                          # installs PUA Call Mic, restarts coreaudiod
+sudo scripts/install-driver.sh                          # installs PUA Call Mic + PUA Call Feed, restarts coreaudiod
 .build/release/pua permissions                          # Accessibility for this terminal
 .build/release/pua shortcut install                     # build, sign and import "PUA Dial" (AX presses Add Shortcut)
 .build/release/pua doctor                               # every prerequisite with its next action

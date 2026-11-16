@@ -62,9 +62,10 @@ public enum SelfTest {
 
     /// Leg 2. Requires the driver; reading its input needs Microphone access for this terminal.
     public static func uplink() -> Result {
-        guard let mic = AudioDevice.find(uid: AudioStreamSession.callMicUID) else {
+        guard let mic = AudioDevice.find(uid: AudioStreamSession.callMicUID),
+              let feedDevice = AudioDevice.find(uid: callFeedUID) else {
             return Result(name: "uplink_call_mic_loopback", ok: false,
-                          detail: ["error": "PUA Call Mic not loaded", "action": "sudo scripts/install-driver.sh"])
+                          detail: ["error": "PUA Call Mic / PUA Call Feed not loaded", "action": "sudo scripts/install-driver.sh"])
         }
         do {
             let source = SampleRing(capacity: 48_000 * 3)
@@ -79,7 +80,7 @@ public enum SelfTest {
                 lock.lock(); level.add(p, Int(b.mDataByteSize) / 4); lock.unlock()
             }, "input IOProc")
             try check(AudioDeviceStart(mic.id, proc), "input start")
-            let feed = DeviceFeed(device: mic, source: source)
+            let feed = DeviceFeed(device: feedDevice, source: source)
             try feed.start()
             usleep(2_300_000)
             feed.stop()

@@ -37,8 +37,11 @@ public enum Doctor {
                             action: trusted ? nil : "pua permissions (then enable this terminal in Privacy & Security > Accessibility)"))
 
         let mic = AudioDevice.find(uid: callMicUID)
-        checks.append(Check(name: "call_mic_driver", ok: mic != nil, detail: mic.map { "\($0.name) id=\($0.id)" } ?? "not loaded",
-                            action: mic == nil ? "sudo scripts/install-driver.sh" : nil))
+        let feed = AudioDevice.find(uid: callFeedUID)
+        let driverOK = mic != nil && feed != nil && mic!.outputChannels == 0
+        checks.append(Check(name: "call_mic_driver", ok: driverOK,
+                            detail: mic.map { "\($0.name) id=\($0.id), feed \(feed.map { "id=\($0.id)" } ?? "missing")" } ?? "not loaded",
+                            action: driverOK ? nil : "sudo scripts/install-driver.sh (driver 0.2+: input-only mic + PUA Call Feed)"))
 
         let audioPIDs = callAudioPIDs(bundleID: "com.apple.avconferenced")
         checks.append(Check(name: "call_audio_process", ok: !audioPIDs.isEmpty,

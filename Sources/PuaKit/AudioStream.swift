@@ -64,13 +64,18 @@ public final class AudioStreamSession {
             }
         }
 
-        // Uplink device.
+        // Uplink: pua renders into the output-only feed; the Phone app reads the input-only mic.
         var mic: AudioDevice?
+        var feedDevice: AudioDevice?
         if options.playbackEnabled {
             guard let found = AudioDevice.find(uid: options.micUID) else {
                 throw PuaError("call_mic_missing", "virtual device \(options.micUID) not found; run scripts/install-driver.sh")
             }
+            guard let f = AudioDevice.find(uid: callFeedUID) else {
+                throw PuaError("call_feed_missing", "PUA Call Feed not found; reinstall the driver (sudo scripts/install-driver.sh)")
+            }
             mic = found
+            feedDevice = f
         }
 
         // Downlink processes.
@@ -89,8 +94,8 @@ public final class AudioStreamSession {
             try t.start()
             tap = t
         }
-        if let mic {
-            let f = DeviceFeed(device: mic, source: playback)
+        if let feedDevice {
+            let f = DeviceFeed(device: feedDevice, source: playback)
             try f.start()
             feed = f
         }

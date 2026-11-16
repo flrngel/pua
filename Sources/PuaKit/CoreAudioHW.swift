@@ -29,6 +29,8 @@ let systemObject = AudioObjectID(kAudioObjectSystemObject)
 
 /// UID of the `PUA Call Mic` virtual device published by Driver/PuaCallMic.c.
 public let callMicUID = "dev.pua.callmic.device"
+/// Output-only twin of PUA Call Mic on the same clock; whatever plays here comes out of the mic.
+public let callFeedUID = "dev.pua.callmic.feed"
 
 func caGet<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ initial: T,
               scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) throws -> T {

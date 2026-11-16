@@ -1,11 +1,15 @@
-// PUA Call Mic: a minimal AudioServerPlugIn loopback device for call audio injection.
+// PUA Call Mic: a minimal AudioServerPlugIn loopback for call audio injection.
 //
-// One device, one input stream and one output stream, 48 kHz mono Float32.
-// Audio written to the output side (by `pua audio-stream`) is read back on the input side
-// (by the Phone app, which uses this device as its microphone). Reads clear the ring, so a
-// stopped writer yields silence instead of a repeating buffer.
+// Two devices on one shared clock and ring, 48 kHz mono Float32:
+//   "PUA Call Feed" (output only): `pua audio-stream` renders the agent's voice into it.
+//   "PUA Call Mic"  (input only):  the Phone app uses it as its microphone.
+// They are separate devices on purpose. During a call avconferenced opens the microphone
+// through Voice Processing, which enables a software reference stream of whatever plays on
+// the *same* device and cancels it as echo. With input and output on one device, the injected
+// voice was cancelled within ~1 s. An input-only microphone has no output to cancel against.
+// Reads clear the ring, so a stopped writer yields silence instead of a repeating buffer.
 //
-// Object IDs: 1 plug-in, 2 device, 3 input stream, 4 output stream. No controls.
+// Object IDs: 1 plug-in, 2 mic device, 3 mic input stream, 4 feed output stream, 5 feed device.
 // SPDX-License-Identifier: MIT
 
 #include <CoreAudio/AudioServerPlugIn.h>
@@ -16,12 +20,15 @@
 #include <string.h>
 
 #define kPlugInBundleID   "dev.pua.callmic"
-#define kDeviceName       "PUA Call Mic"
-#define kDeviceUID        "dev.pua.callmic.device"
+#define kMicName          "PUA Call Mic"
+#define kMicUID           "dev.pua.callmic.device"
+#define kFeedName         "PUA Call Feed"
+#define kFeedUID          "dev.pua.callmic.feed"
 #define kModelUID         "dev.pua.callmic.model"
+#define kClockDomain      0x50554131u  // 'PUA1': both devices share one clock
 #define kManufacturer     "pua"
 
-enum { kObjPlugIn = kAudioObjectPlugInObject, kObjDevice = 2, kObjStreamIn = 3, kObjStreamOut = 4 };
+enum { kObjPlugIn = kAudioObjectPlugInObject, kObjMic = 2, kObjStreamIn = 3, kObjStreamOut = 4, kObjFeed = 5 };
 
 static const Float64 kSampleRate = 48000.0;
 static const UInt32 kChannels = 1;
@@ -31,7 +38,7 @@ static const UInt32 kBytesPerFrame = sizeof(Float32) * 1;
 static pthread_mutex_t gStateMutex = PTHREAD_MUTEX_INITIALIZER;
 static UInt32 gRefCount = 0;
 static AudioServerPlugInHostRef gHost = NULL;
-static UInt64 gIORunning = 0;
+static UInt64 gIORunning[2] = {0, 0};  // [mic, feed]; the clock anchor resets when both stop
 static Float64 gHostTicksPerFrame = 0;
 static UInt64 gAnchorHostTime = 0;
 static UInt64 gNumberTimeStamps = 0;
@@ -117,6 +124,8 @@ static ULONG PlugIn_Release(void* driver) {
     return r;
 }
 
+static Boolean IsDevice(AudioObjectID id) { return id == kObjMic || id == kObjFeed; }
+
 // MARK: - Lifecycle
 
 static OSStatus PlugIn_Initialize(AudioServerPlugInDriverRef driver, AudioServerPlugInHostRef host) {
@@ -140,12 +149,12 @@ static OSStatus PlugIn_DestroyDevice(AudioServerPlugInDriverRef d, AudioObjectID
 static OSStatus PlugIn_AddDeviceClient(AudioServerPlugInDriverRef d, AudioObjectID id, const AudioServerPlugInClientInfo* c) {
     (void)c;
     if (d != gDriverRef) return kAudioHardwareBadObjectError;
-    return id == kObjDevice ? 0 : kAudioHardwareBadObjectError;
+    return IsDevice(id) ? 0 : kAudioHardwareBadObjectError;
 }
 static OSStatus PlugIn_RemoveDeviceClient(AudioServerPlugInDriverRef d, AudioObjectID id, const AudioServerPlugInClientInfo* c) {
     (void)c;
     if (d != gDriverRef) return kAudioHardwareBadObjectError;
-    return id == kObjDevice ? 0 : kAudioHardwareBadObjectError;
+    return IsDevice(id) ? 0 : kAudioHardwareBadObjectError;
 }
 static OSStatus PlugIn_PerformDeviceConfigurationChange(AudioServerPlugInDriverRef d, AudioObjectID id, UInt64 a, void* i) {
     (void)d; (void)id; (void)a; (void)i;
@@ -174,12 +183,12 @@ static AudioStreamBasicDescription StreamFormat(void) {
 
 static Boolean IsStream(AudioObjectID id) { return id == kObjStreamIn || id == kObjStreamOut; }
 
-// Number of stream IDs the device reports for a scope, written into `out` (up to 2).
-static UInt32 DeviceStreams(AudioObjectPropertyScope scope, AudioObjectID* out) {
-    UInt32 n = 0;
-    if (scope == kAudioObjectPropertyScopeGlobal || scope == kAudioObjectPropertyScopeInput) out[n++] = kObjStreamIn;
-    if (scope == kAudioObjectPropertyScopeGlobal || scope == kAudioObjectPropertyScopeOutput) out[n++] = kObjStreamOut;
-    return n;
+// Stream IDs a device reports for a scope, written into `out` (at most 1).
+static UInt32 DeviceStreams(AudioObjectID device, AudioObjectPropertyScope scope, AudioObjectID* out) {
+    Boolean global = scope == kAudioObjectPropertyScopeGlobal;
+    if (device == kObjMic && (global || scope == kAudioObjectPropertyScopeInput)) { out[0] = kObjStreamIn; return 1; }
+    if (device == kObjFeed && (global || scope == kAudioObjectPropertyScopeOutput)) { out[0] = kObjStreamOut; return 1; }
+    return 0;
 }
 
 #define RETURN_SIZE(T) do { *outSize = sizeof(T); return 0; } while (0)
@@ -197,25 +206,27 @@ static OSStatus PlugIn_IsPropertySettable(AudioServerPlugInDriverRef d, AudioObj
     if (!PlugIn_HasProperty(d, id, pid, a)) return kAudioHardwareUnknownPropertyError;
     // Formats and the sample rate accept their single supported value, so clients may "set" them.
     *outSettable = (IsStream(id) && (a->mSelector == kAudioStreamPropertyVirtualFormat || a->mSelector == kAudioStreamPropertyPhysicalFormat))
-                || (id == kObjDevice && a->mSelector == kAudioDevicePropertyNominalSampleRate);
+                || (IsDevice(id) && a->mSelector == kAudioDevicePropertyNominalSampleRate);
     return 0;
 }
 
 static OSStatus PlugIn_GetPropertyDataSize(AudioServerPlugInDriverRef d, AudioObjectID id, pid_t pid, const AudioObjectPropertyAddress* a, UInt32 qs, const void* qd, UInt32* outSize) {
     (void)pid; (void)qs; (void)qd;
     if (d != gDriverRef || a == NULL || outSize == NULL) return kAudioHardwareIllegalOperationError;
-    AudioObjectID tmp[2];
+    AudioObjectID dev = id;
+    AudioObjectID tmp[1];
+    if (IsDevice(id)) id = kObjMic;  // both devices have the same property set
     switch (id) {
     case kObjPlugIn:
         switch (a->mSelector) {
         case kAudioObjectPropertyBaseClass: case kAudioObjectPropertyClass: RETURN_SIZE(AudioClassID);
         case kAudioObjectPropertyOwner: RETURN_SIZE(AudioObjectID);
         case kAudioObjectPropertyManufacturer: case kAudioPlugInPropertyResourceBundle: RETURN_SIZE(CFStringRef);
-        case kAudioObjectPropertyOwnedObjects: case kAudioPlugInPropertyDeviceList: RETURN_SIZE(AudioObjectID);
+        case kAudioObjectPropertyOwnedObjects: case kAudioPlugInPropertyDeviceList: *outSize = 2 * sizeof(AudioObjectID); return 0;
         case kAudioPlugInPropertyTranslateUIDToDevice: RETURN_SIZE(AudioObjectID);
         default: return kAudioHardwareUnknownPropertyError;
         }
-    case kObjDevice:
+    case kObjMic:
         switch (a->mSelector) {
         case kAudioObjectPropertyBaseClass: case kAudioObjectPropertyClass: RETURN_SIZE(AudioClassID);
         case kAudioObjectPropertyOwner: RETURN_SIZE(AudioObjectID);
@@ -228,7 +239,7 @@ static OSStatus PlugIn_GetPropertyDataSize(AudioServerPlugInDriverRef d, AudioOb
         case kAudioDevicePropertyIsHidden: case kAudioDevicePropertyZeroTimeStampPeriod: RETURN_SIZE(UInt32);
         case kAudioDevicePropertyRelatedDevices: RETURN_SIZE(AudioObjectID);
         case kAudioObjectPropertyOwnedObjects: case kAudioDevicePropertyStreams:
-            *outSize = DeviceStreams(a->mScope, tmp) * (UInt32)sizeof(AudioObjectID); return 0;
+            *outSize = DeviceStreams(dev, a->mScope, tmp) * (UInt32)sizeof(AudioObjectID); return 0;
         case kAudioObjectPropertyControlList: *outSize = 0; return 0;
         case kAudioDevicePropertyNominalSampleRate: RETURN_SIZE(Float64);
         case kAudioDevicePropertyAvailableNominalSampleRates: RETURN_SIZE(AudioValueRange);
@@ -258,7 +269,10 @@ static OSStatus PlugIn_GetPropertyDataSize(AudioServerPlugInDriverRef d, AudioOb
 static OSStatus PlugIn_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID id, pid_t pid, const AudioObjectPropertyAddress* a, UInt32 qs, const void* qd, UInt32 inSize, UInt32* outSize, void* outData) {
     (void)pid;
     if (d != gDriverRef || a == NULL || outSize == NULL || outData == NULL) return kAudioHardwareIllegalOperationError;
-    AudioObjectID streams[2];
+    AudioObjectID streams[1];
+    AudioObjectID dev = id;
+    Boolean isMic = id == kObjMic;
+    if (IsDevice(id)) id = kObjMic;
     switch (id) {
     case kObjPlugIn:
         switch (a->mSelector) {
@@ -267,44 +281,53 @@ static OSStatus PlugIn_GetPropertyData(AudioServerPlugInDriverRef d, AudioObject
         case kAudioObjectPropertyOwner: WRITE(AudioObjectID, kAudioObjectUnknown);
         case kAudioObjectPropertyManufacturer: WRITE(CFStringRef, CFSTR(kManufacturer));
         case kAudioPlugInPropertyResourceBundle: WRITE(CFStringRef, CFSTR(""));
-        case kAudioObjectPropertyOwnedObjects: case kAudioPlugInPropertyDeviceList:
-            if (inSize < sizeof(AudioObjectID)) { *outSize = 0; return 0; }
-            WRITE(AudioObjectID, kObjDevice);
+        case kAudioObjectPropertyOwnedObjects: case kAudioPlugInPropertyDeviceList: {
+            AudioObjectID devices[2] = { kObjMic, kObjFeed };
+            UInt32 n = inSize / (UInt32)sizeof(AudioObjectID);
+            if (n > 2) n = 2;
+            memcpy(outData, devices, n * sizeof(AudioObjectID));
+            *outSize = n * (UInt32)sizeof(AudioObjectID);
+            return 0;
+        }
         case kAudioPlugInPropertyTranslateUIDToDevice: {
             if (qs != sizeof(CFStringRef) || qd == NULL) return kAudioHardwareBadPropertySizeError;
             CFStringRef uid = *(const CFStringRef*)qd;
-            WRITE(AudioObjectID, (uid && CFStringCompare(uid, CFSTR(kDeviceUID), 0) == kCFCompareEqualTo) ? kObjDevice : kAudioObjectUnknown);
+            AudioObjectID found = kAudioObjectUnknown;
+            if (uid && CFStringCompare(uid, CFSTR(kMicUID), 0) == kCFCompareEqualTo) found = kObjMic;
+            if (uid && CFStringCompare(uid, CFSTR(kFeedUID), 0) == kCFCompareEqualTo) found = kObjFeed;
+            WRITE(AudioObjectID, found);
         }
         default: return kAudioHardwareUnknownPropertyError;
         }
-    case kObjDevice:
+    case kObjMic:
         switch (a->mSelector) {
         case kAudioObjectPropertyBaseClass: WRITE(AudioClassID, kAudioObjectClassID);
         case kAudioObjectPropertyClass: WRITE(AudioClassID, kAudioDeviceClassID);
         case kAudioObjectPropertyOwner: WRITE(AudioObjectID, kObjPlugIn);
-        case kAudioObjectPropertyName: WRITE(CFStringRef, CFSTR(kDeviceName));
+        case kAudioObjectPropertyName: WRITE(CFStringRef, isMic ? CFSTR(kMicName) : CFSTR(kFeedName));
         case kAudioObjectPropertyManufacturer: WRITE(CFStringRef, CFSTR(kManufacturer));
-        case kAudioDevicePropertyDeviceUID: WRITE(CFStringRef, CFSTR(kDeviceUID));
+        case kAudioDevicePropertyDeviceUID: WRITE(CFStringRef, isMic ? CFSTR(kMicUID) : CFSTR(kFeedUID));
         case kAudioDevicePropertyModelUID: WRITE(CFStringRef, CFSTR(kModelUID));
         case kAudioDevicePropertyTransportType: WRITE(UInt32, kAudioDeviceTransportTypeVirtual);
-        case kAudioDevicePropertyRelatedDevices: WRITE(AudioObjectID, kObjDevice);
-        case kAudioDevicePropertyClockDomain: WRITE(UInt32, 0);
+        // Not related to each other: Voice Processing must not treat the feed as the mic's speaker.
+        case kAudioDevicePropertyRelatedDevices: WRITE(AudioObjectID, dev);
+        case kAudioDevicePropertyClockDomain: WRITE(UInt32, kClockDomain);
         case kAudioDevicePropertyDeviceIsAlive: WRITE(UInt32, 1);
         case kAudioDevicePropertyDeviceIsRunning: {
             pthread_mutex_lock(&gStateMutex);
-            UInt32 running = gIORunning > 0;
+            UInt32 running = gIORunning[isMic ? 0 : 1] > 0;
             pthread_mutex_unlock(&gStateMutex);
             WRITE(UInt32, running);
         }
-        // Selectable as a default microphone, never offered as a default speaker.
-        case kAudioDevicePropertyDeviceCanBeDefaultDevice: WRITE(UInt32, a->mScope == kAudioObjectPropertyScopeOutput ? 0 : 1);
+        // The mic may be a default input; the feed is never offered as a default speaker.
+        case kAudioDevicePropertyDeviceCanBeDefaultDevice: WRITE(UInt32, isMic && a->mScope != kAudioObjectPropertyScopeOutput ? 1 : 0);
         case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice: WRITE(UInt32, 0);
         case kAudioDevicePropertyLatency: WRITE(UInt32, 0);
         case kAudioDevicePropertySafetyOffset: WRITE(UInt32, 0);
         case kAudioDevicePropertyIsHidden: WRITE(UInt32, 0);
         case kAudioDevicePropertyZeroTimeStampPeriod: WRITE(UInt32, kRingFrames);
         case kAudioObjectPropertyOwnedObjects: case kAudioDevicePropertyStreams: {
-            UInt32 n = DeviceStreams(a->mScope, streams);
+            UInt32 n = DeviceStreams(dev, a->mScope, streams);
             UInt32 fit = inSize / (UInt32)sizeof(AudioObjectID);
             if (fit < n) n = fit;
             memcpy(outData, streams, n * sizeof(AudioObjectID));
@@ -342,8 +365,8 @@ static OSStatus PlugIn_GetPropertyData(AudioServerPlugInDriverRef d, AudioObject
         switch (a->mSelector) {
         case kAudioObjectPropertyBaseClass: WRITE(AudioClassID, kAudioObjectClassID);
         case kAudioObjectPropertyClass: WRITE(AudioClassID, kAudioStreamClassID);
-        case kAudioObjectPropertyOwner: WRITE(AudioObjectID, kObjDevice);
-        case kAudioObjectPropertyName: WRITE(CFStringRef, input ? CFSTR("PUA Call Mic Input") : CFSTR("PUA Call Mic Feed"));
+        case kAudioObjectPropertyOwner: WRITE(AudioObjectID, input ? kObjMic : kObjFeed);
+        case kAudioObjectPropertyName: WRITE(CFStringRef, input ? CFSTR("PUA Call Mic Input") : CFSTR("PUA Call Feed Output"));
         case kAudioObjectPropertyOwnedObjects: *outSize = 0; return 0;
         case kAudioStreamPropertyIsActive: WRITE(UInt32, 1);
         case kAudioStreamPropertyDirection: WRITE(UInt32, input ? 1 : 0);
@@ -371,7 +394,7 @@ static OSStatus PlugIn_GetPropertyData(AudioServerPlugInDriverRef d, AudioObject
 static OSStatus PlugIn_SetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID id, pid_t pid, const AudioObjectPropertyAddress* a, UInt32 qs, const void* qd, UInt32 inSize, const void* inData) {
     (void)pid; (void)qs; (void)qd;
     if (d != gDriverRef || a == NULL || inData == NULL) return kAudioHardwareIllegalOperationError;
-    if (id == kObjDevice && a->mSelector == kAudioDevicePropertyNominalSampleRate) {
+    if (IsDevice(id) && a->mSelector == kAudioDevicePropertyNominalSampleRate) {
         if (inSize != sizeof(Float64)) return kAudioHardwareBadPropertySizeError;
         return *(const Float64*)inData == kSampleRate ? 0 : kAudioDeviceUnsupportedFormatError;
     }
@@ -391,30 +414,31 @@ static OSStatus PlugIn_SetPropertyData(AudioServerPlugInDriverRef d, AudioObject
 
 static OSStatus PlugIn_StartIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client) {
     (void)client;
-    if (d != gDriverRef || id != kObjDevice) return kAudioHardwareBadObjectError;
+    if (d != gDriverRef || !IsDevice(id)) return kAudioHardwareBadObjectError;
     pthread_mutex_lock(&gStateMutex);
-    if (gIORunning == 0) {
+    if (gIORunning[0] + gIORunning[1] == 0) {
         gNumberTimeStamps = 0;
         gAnchorHostTime = mach_absolute_time();
         memset(gRing, 0, sizeof(gRing));
     }
-    ++gIORunning;
+    ++gIORunning[id == kObjMic ? 0 : 1];
     pthread_mutex_unlock(&gStateMutex);
     return 0;
 }
 
 static OSStatus PlugIn_StopIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client) {
     (void)client;
-    if (d != gDriverRef || id != kObjDevice) return kAudioHardwareBadObjectError;
+    if (d != gDriverRef || !IsDevice(id)) return kAudioHardwareBadObjectError;
     pthread_mutex_lock(&gStateMutex);
-    if (gIORunning > 0) --gIORunning;
+    UInt64* count = &gIORunning[id == kObjMic ? 0 : 1];
+    if (*count > 0) --*count;
     pthread_mutex_unlock(&gStateMutex);
     return 0;
 }
 
 static OSStatus PlugIn_GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client, Float64* outSampleTime, UInt64* outHostTime, UInt64* outSeed) {
     (void)client;
-    if (d != gDriverRef || id != kObjDevice) return kAudioHardwareBadObjectError;
+    if (d != gDriverRef || !IsDevice(id)) return kAudioHardwareBadObjectError;
     pthread_mutex_lock(&gStateMutex);
     UInt64 now = mach_absolute_time();
     Float64 ticksPerPeriod = gHostTicksPerFrame * (Float64)kRingFrames;
@@ -429,8 +453,9 @@ static OSStatus PlugIn_GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjec
 
 static OSStatus PlugIn_WillDoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client, UInt32 op, Boolean* outWill, Boolean* outInPlace) {
     (void)client;
-    if (d != gDriverRef || id != kObjDevice) return kAudioHardwareBadObjectError;
-    Boolean will = op == kAudioServerPlugInIOOperationReadInput || op == kAudioServerPlugInIOOperationWriteMix;
+    if (d != gDriverRef || !IsDevice(id)) return kAudioHardwareBadObjectError;
+    Boolean will = (id == kObjMic && op == kAudioServerPlugInIOOperationReadInput)
+                || (id == kObjFeed && op == kAudioServerPlugInIOOperationWriteMix);
     if (outWill) *outWill = will;
     if (outInPlace) *outInPlace = true;
     return 0;
@@ -438,29 +463,29 @@ static OSStatus PlugIn_WillDoIOOperation(AudioServerPlugInDriverRef d, AudioObje
 
 static OSStatus PlugIn_BeginIOOperation(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 c, UInt32 op, UInt32 n, const AudioServerPlugInIOCycleInfo* info) {
     (void)c; (void)op; (void)n; (void)info;
-    return (d == gDriverRef && id == kObjDevice) ? 0 : kAudioHardwareBadObjectError;
+    return (d == gDriverRef && IsDevice(id)) ? 0 : kAudioHardwareBadObjectError;
 }
 
 static OSStatus PlugIn_EndIOOperation(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 c, UInt32 op, UInt32 n, const AudioServerPlugInIOCycleInfo* info) {
     (void)c; (void)op; (void)n; (void)info;
-    return (d == gDriverRef && id == kObjDevice) ? 0 : kAudioHardwareBadObjectError;
+    return (d == gDriverRef && IsDevice(id)) ? 0 : kAudioHardwareBadObjectError;
 }
 
-// The ring is indexed by absolute sample time. Writes land at the output sample time; reads
-// at the (earlier) input sample time pick them up one IO cycle later. Reads zero what they
-// consume so a stalled writer produces silence.
+// The ring is indexed by absolute sample time on the shared clock. Feed writes land at the
+// output sample time; mic reads at the (earlier) input sample time pick them up one IO cycle
+// later. Reads zero what they consume so a stalled writer produces silence.
 static OSStatus PlugIn_DoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID id, AudioObjectID stream, UInt32 client, UInt32 op, UInt32 frames, const AudioServerPlugInIOCycleInfo* info, void* main, void* secondary) {
     (void)client; (void)secondary;
-    if (d != gDriverRef || id != kObjDevice) return kAudioHardwareBadObjectError;
+    if (d != gDriverRef || !IsDevice(id)) return kAudioHardwareBadObjectError;
     if (main == NULL || info == NULL || frames > kRingFrames) return kAudioHardwareIllegalOperationError;
     Float32* buf = (Float32*)main;
-    if (op == kAudioServerPlugInIOOperationWriteMix && stream == kObjStreamOut) {
+    if (op == kAudioServerPlugInIOOperationWriteMix && id == kObjFeed && stream == kObjStreamOut) {
         UInt64 start = (UInt64)info->mOutputTime.mSampleTime % kRingFrames;
         UInt32 first = kRingFrames - (UInt32)start;
         if (first > frames) first = frames;
         memcpy(gRing + start, buf, first * kBytesPerFrame);
         memcpy(gRing, buf + first, (frames - first) * kBytesPerFrame);
-    } else if (op == kAudioServerPlugInIOOperationReadInput && stream == kObjStreamIn) {
+    } else if (op == kAudioServerPlugInIOOperationReadInput && id == kObjMic && stream == kObjStreamIn) {
         UInt64 start = (UInt64)info->mInputTime.mSampleTime % kRingFrames;
         UInt32 first = kRingFrames - (UInt32)start;
         if (first > frames) first = frames;
