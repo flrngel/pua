@@ -13,7 +13,8 @@ public enum CallControl {
     static let answerLabels = labels("PUA_ANSWER_LABELS", ["Accept", "Answer", "수락", "응답", "받기"])
     static let declineLabels = labels("PUA_DECLINE_LABELS", ["Decline", "거절"])
     static let endLabels = labels("PUA_END_LABELS", ["End", "End Call", "Hang Up", "종료", "통화 종료", "끊기"])
-    static let timerPattern = try! NSRegularExpression(pattern: "^(?:[0-9]{1,2}:)?[0-9]{1,2}:[0-5][0-9]$")
+    // A bare timer ("0:42") or one ending the relay banner label ("<contact>, Using Your iPhone - 0:02").
+    static let timerPattern = try! NSRegularExpression(pattern: "(?:^|\\s)(?:[0-9]{1,2}:)?[0-9]{1,2}:[0-5][0-9]$")
 
     private static func labels(_ env: String, _ defaults: [String]) -> Set<String> {
         let extra = ProcessInfo.processInfo.environment[env]?.split(separator: ",").map {
