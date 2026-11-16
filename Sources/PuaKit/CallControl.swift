@@ -129,6 +129,29 @@ public enum CallControl {
         return matches[0].0
     }
 
+    /// macOS posts a FaceTime notification instead of placing the call when Continuity calling is
+    /// off on the iPhone ("iPhone Calls Not Available"). Returns its text, if shown.
+    static let relayUnavailableMarkers = ["iPhone Calls Not Available", "not configured to allow calls"]
+
+    public static func relayUnavailableNotice(dismiss: Bool = false) -> String? {
+        guard AX.isTrusted, let app = AX.app(bundleID: notificationCenterBundleID) else { return nil }
+        for window in AX.windows(app) {
+            var notice: String?
+            var cancel: AXUIElement?
+            AX.walk(window, maxDepth: 10) { el, _ in
+                let label = AX.label(el)
+                if notice == nil, relayUnavailableMarkers.contains(where: { label.contains($0) }) { notice = label }
+                if notice != nil, cancel == nil, AX.role(el) == kAXButtonRole, label == "Cancel" { cancel = el }
+                return true
+            }
+            if let notice {
+                if dismiss, let cancel { AX.press(cancel) }
+                return notice
+            }
+        }
+        return nil
+    }
+
     /// Polls until `state` is reached or the timeout passes.
     public static func wait(for state: State, timeout: TimeInterval) -> Snapshot? {
         let deadline = Date().addingTimeInterval(timeout)
