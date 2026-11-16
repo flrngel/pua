@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.1.4"
+let version = "0.1.5"
 
 let usage = """
 pua \(version): tunnel iPhone (Continuity) calls on a Mac to an agent
@@ -122,15 +122,20 @@ do {
             let via = args.value("--via") ?? "shortcut"
             if via == "tel" { try Dialer.dialViaTel(number) }
             else { try Dialer.dialViaShortcut(number, shortcut: args.value("--shortcut") ?? Dialer.defaultShortcutName) }
+            // The iPhone can reject a relay call ~0.5 s after the outgoing banner appears, so keep
+            // watching for the "iPhone Calls Not Available" notice for 3 s after the call UI shows.
             var observed: CallControl.Snapshot?
-            let deadline = Date().addingTimeInterval(10)
+            var deadline = Date().addingTimeInterval(10)
             while Date() < deadline {
                 if let notice = CallControl.relayUnavailableNotice(dismiss: true) {
                     throw PuaError("iphone_calls_unavailable", "\(notice) On the iPhone: Settings > Apps > Phone > "
                         + "Calls on Other Devices > turn on Allow Calls on Other Devices and this Mac (same Apple Account).")
                 }
                 let s = CallControl.snapshot()
-                if s.state == .active { observed = s; break }
+                if s.state == .active, observed == nil {
+                    observed = s
+                    deadline = min(deadline, Date().addingTimeInterval(3))
+                }
                 usleep(250_000)
             }
             printJSON(["ok": true, "submitted": true, "via": via,
