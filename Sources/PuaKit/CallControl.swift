@@ -125,7 +125,11 @@ public enum CallControl {
             }
         }
         guard !matches.isEmpty else { throw PuaError("no_call_control", "no \(action.rawValue) control is visible") }
-        guard matches.count == 1 else { throw PuaError("ambiguous_controls", "\(matches.count) \(action.rawValue) controls are visible") }
+        // The banner and the Phone window can both show the same call; two different callers
+        // (call waiting) are ambiguous.
+        guard Set(matches.map { $0.2 ?? "" }).count == 1 else {
+            throw PuaError("ambiguous_controls", "\(matches.count) \(action.rawValue) controls are visible")
+        }
         guard AX.press(matches[0].1) else { throw PuaError("press_failed", "AXPress failed") }
         return matches[0].0
     }

@@ -31,6 +31,8 @@ Audio route (Phone app Audio menu)
 Conversation (on-device speech recognition + language model; settings: docs/configuration.md)
   pua converse [--dial NUMBER] [--route] [--record DIR] [conversation flags]
                                   talk on an outgoing or already connected call
+  pua listen [--answer-after S] [--max-calls N | --once] [--record DIR] [conversation flags]
+                                  wait for incoming calls, answer each and talk (Ctrl-C stops)
   pua config show [--config FILE] the resolved settings and where they came from
     conversation flags (override the config file):
       --config FILE  --name NAME  --instructions TEXT | --instructions-file F
@@ -311,6 +313,19 @@ do {
             Hooks.waitForRunning(timeout: 30)
             return summary
         }
+        printJSON(summary)
+
+    case "listen":
+        let loaded = try loadConfig(&args)
+        let (settings, audio) = try conversationSettings(.incoming, loaded, &args)
+        var o = Listener.Options(settings: settings)
+        o.audio = audio
+        o.recordBase = args.value("--record").map { URL(fileURLWithPath: $0) } ?? loaded.recordBase
+        o.answerAfter = args.value("--answer-after").flatMap(Double.init) ?? loaded.answerAfter
+        o.maxCalls = args.flag("--once") ? 1 : (args.value("--max-calls").flatMap(Int.init) ?? loaded.maxCalls)
+        o.callEndedHook = loaded.callEndedHook
+        let listener = Listener(options: o)
+        let summary = try runAsync(interrupt: { listener.stop() }) { try await listener.run() }
         printJSON(summary)
 
     case "config":
