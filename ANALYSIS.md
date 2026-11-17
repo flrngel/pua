@@ -65,4 +65,5 @@ device. See [android.md](docs/analysis/android.md).
 
 See [pua-design.md](docs/analysis/pua-design.md): the `pua` CLI (Swift, macOS 26), the
 two-device `PUA Call Mic` driver (C), the PCM16 `audio-stream` contract for agents, and
-`converse` for AI conversations with on-device speech recognition and language model.
+`converse` (outgoing) and `listen` (incoming) for AI conversations with on-device speech
+recognition and language model.

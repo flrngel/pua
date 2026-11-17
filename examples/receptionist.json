@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "agent": {
+    "name": "Jessica",
+    "system_prompt_file": "receptionist.txt",
+    "greeting": "Hi, you've reached {name}, an AI assistant answering this phone. This call is recorded. Who's calling?",
+    "locale": "en-US"
+  },
+  "engines": { "stt": "apple", "llm": "apple", "tts": "system" },
+  "conversation": { "end_of_turn_silence": 0.8, "max_seconds": 180, "hang_up_when_done": true },
+  "listen": { "answer_after": 8 },
+  "record": { "directory": "~/pua-calls" },
+  "hooks": { "call_ended": ["./hooks/notify.sh"] }
+}

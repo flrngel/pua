@@ -1,7 +1,8 @@
 # pua
 
 Tunnel your iPhone's cellular calls through your Mac to a program or AI agent: dial, answer,
-hang up, hear the caller and speak into the call. It is built on Apple Continuity
+hang up, hear the caller and speak into the call. An on-device AI can place calls
+(`pua converse`) or answer them (`pua listen`). It is built on Apple Continuity
 ("Calls on Other Devices") and the macOS Phone app. Nothing runs on the iPhone.
 
 How and why it works this way: [ANALYSIS.md](ANALYSIS.md) (the mechanism, with evidence) and
@@ -50,7 +51,7 @@ model is chatty but shallow: it took "what is my name?" as a question about itse
 
 ## Requirements
 
-- macOS 26 or later (Phone app), Apple Silicon or Intel. `converse` also needs Apple Intelligence
+- macOS 26 or later (Phone app), Apple Silicon or Intel. `converse` and `listen` also need Apple Intelligence
   turned on (Apple Silicon); its English speech model downloads on first use.
 - An iPhone on the same Apple Account and Wi-Fi, with *Settings > Apps > Phone > Calls on Other
   Devices > (this Mac)* enabled. FaceTime on the Mac must have the phone number enabled.
@@ -109,28 +110,39 @@ Flags:
 
 Stopping `audio-stream` never hangs up the call.
 
-### AI conversation
+### AI conversations
 
 ```sh
-# Dial, talk, record. With ELEVENLABS_API_KEY set the agent uses ElevenLabs; otherwise the macOS voice.
+# Outgoing: dial, talk, record. With ELEVENLABS_API_KEY set the agent uses ElevenLabs; otherwise the macOS voice.
 pua converse --dial "+1 555 123 4567" --record ./call
 pua converse --route --record ./call                    # on a call that is already connected
-pua converse --route --instructions-file persona.txt --greeting "Hi, this is an AI assistant…"
+
+# Incoming: answer every call that rings for 8 s, take a message, record it. Ctrl-C stops.
+pua listen --answer-after 8 --record ~/pua-calls
+pua listen --config examples/receptionist.json          # persona, prompt file, hook from a config file
+pua config show                                         # the settings in effect, and where they came from
 ```
 
-`converse` is half duplex: it listens until the caller has been quiet for 0.8 s
-(`--end-silence`), replies, and ignores what is said while it speaks. The model ends the call
-when the caller says goodbye (`--no-hangup` keeps it up). `--record DIR` writes
-`conversation.wav` (stereo: left caller, right agent), `transcript.md` and `transcript.jsonl`.
-Events (stderr JSONL): `conversation_ready`, `heard`, `said` (with `latency_s`), `hung_up`,
-`llm_error`, `tts_error`. Other flags: `--tts system|elevenlabs`, `--voice ID`,
-`--tts-model ID` (default `eleven_flash_v2_5`), `--max-seconds N` (default 300).
+Both are half duplex: the agent listens until the caller has been quiet for 0.8 s
+(`--end-silence`), replies, and ignores what is said while it speaks. It hangs up after the
+caller says goodbye (`--no-hangup` keeps the call up). `--record DIR` writes
+`conversation.wav` (stereo: left caller, right agent), `transcript.md`, `transcript.jsonl` and
+`call.json`.
+
+`listen` answers one call at a time. While a call rings it waits `--answer-after` seconds, so
+you can still pick up on the iPhone or the Mac, then points the Phone microphone at PUA Call Mic
+and presses Accept. The microphone goes back to normal after every call. `--once` or
+`--max-calls N` end it after N calls.
+
+The system prompt, greeting, voice, engines, timing, recording folder and an after-call hook
+come from a JSON config file, with flags on top: see [docs/configuration.md](docs/configuration.md).
+Events go to stderr as JSON lines (`ringing`, `answered`, `heard`, `said`, `call_finished`, …).
 
 ## Safety
 
-`pua` acts only on explicit commands and never auto-answers. It records audio only with
-`converse --record`, and the default greeting tells the caller they are talking to an AI and
-that the call is recorded. Keep that disclosure when you change the greeting, and follow your
+`pua` acts only on explicit commands. It answers calls only while `pua listen` runs, and records
+audio only with `--record` (or `record.directory`). The default greetings tell the caller they are
+talking to an AI, and that the call is recorded when it is. Keep that disclosure when you change the greeting, and follow your
 local call-recording laws. Speech recognition and the language model run on the Mac. With
 ElevenLabs TTS, only the agent's reply text is sent to ElevenLabs.
 
@@ -138,3 +150,10 @@ ElevenLabs TTS, only the agent's reply text is sent to ElevenLabs.
 
 See [docs/analysis/pua-design.md](docs/analysis/pua-design.md) for what was verified on hardware
 and the known gaps. Uninstall the driver with `sudo scripts/uninstall-driver.sh`.
+
+## Extending
+
+Speech recognition, the reply model and the voice are pluggable engines selected by name in the
+config. [CONTRIBUTING.md](CONTRIBUTING.md) maps the code, shows how to add an engine or a config
+key, and lists the checks that need no phone (`swift test`, `pua selftest`, an offline
+conversation).
