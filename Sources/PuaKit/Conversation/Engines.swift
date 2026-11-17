@@ -34,6 +34,14 @@ public protocol SpeechRecognizer: AnyObject {
     func finish() async
 }
 
+/// Something a reply model does on its own, outside a reply.
+public enum ModelEvent: Sendable {
+    /// Speak this line when the caller is not talking (a greeting, "I found it", a reminder).
+    case say(String)
+    /// End the call after anything queued has been said.
+    case hangup
+}
+
 /// Writes the agent's replies. Keeps the conversation context for one call.
 public protocol ReplyModel: AnyObject {
     var name: String { get }
@@ -42,6 +50,10 @@ public protocol ReplyModel: AnyObject {
     /// sentences and speaks each one as soon as it is complete. End the reply with
     /// `Conversation.hangupMarker` to end the call.
     func reply(to callerText: String) -> AsyncThrowingStream<String, Error>
+    /// Unprompted actions; nil when the model only answers turns.
+    var events: AsyncStream<ModelEvent>? { get }
+    /// The call is over (`summary` includes the transcript). Release resources here.
+    func finish(summary: [String: Any]) async
 }
 
 /// Text-to-speech for the agent's side of the call.
@@ -53,7 +65,11 @@ public protocol Voice: AnyObject {
 }
 
 public extension SpeechRecognizer { func prepare() async throws {} }
-public extension ReplyModel { func prepare() async throws {} }
+public extension ReplyModel {
+    func prepare() async throws {}
+    var events: AsyncStream<ModelEvent>? { nil }
+    func finish(summary: [String: Any]) async {}
+}
 public extension Voice { func prepare() async throws {} }
 
 /// Where a `Voice` writes: 48 kHz mono Float32 samples, played into the call in order.
@@ -98,6 +114,12 @@ public struct EngineSet {
     public var description: [String: String] {
         ["stt": recognizer.name, "llm": model.name, "tts": voice.name]
     }
+
+    /// Releases everything when the call never happened (missed, answered elsewhere).
+    public func discard() async {
+        await recognizer.finish()
+        await model.finish(summary: ["ok": false, "reason": "not_answered", "transcript": []])
+    }
 }
 
 public enum Engines {
@@ -111,6 +133,7 @@ public enum Engines {
     /// `engines.llm`
     public static let models: [String: Factory<ReplyModel>] = [
         "apple": { AppleReplyModel(instructions: $0.instructions) },
+        "exec": { try ExecReplyModel(settings: $0) },
     ]
 
     /// `engines.tts`

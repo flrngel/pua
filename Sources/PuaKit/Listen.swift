@@ -1,31 +1,34 @@
 import Foundation
 
 /// `pua listen`: waits for incoming calls relayed from the iPhone, answers them on the Mac and
-/// runs a `Conversation` on each, one call at a time.
+/// runs a `CallSession` on each (pua's conversation, or a stream bridge to your agent), one call
+/// at a time.
 ///
-/// Per call: ring → wait `answerAfter` (the owner can still pick up) → prepare engines and point
-/// the Phone microphone at PUA Call Mic while it rings → Accept → talk → restore the microphone →
-/// `hooks.call_ended`. Between calls the Phone app keeps its normal microphone.
+/// Per call: ring → wait `answerAfter` (the owner can still pick up) → make the session and point
+/// the Phone microphone at PUA Call Mic while it rings → Accept → run the session → restore the
+/// microphone → `hooks.call_ended`. Between calls the Phone app keeps its normal microphone.
 public final class Listener: @unchecked Sendable {
     public struct Options {
-        /// Settings for every call; `recordDirectory` is replaced per call when `recordBase` is set.
-        public var settings: ConversationSettings
+        /// Makes the session for each call, while it rings.
+        public var session: CallSessionFactory
+        /// Runs once before listening, so a broken setup fails now rather than on the first call.
+        /// Returns what to report in the `listening` event.
+        public var preflight: @Sendable () async throws -> [String: Any] = { [:] }
         public var recordBase: URL?
         public var answerAfter: Double = 0
         /// 0: no limit.
         public var maxCalls = 0
         public var callEndedHook: [String]?
-        public var audio = Conversation.CallAudio()
         public var micName = "PUA Call Mic"
 
-        public init(settings: ConversationSettings) { self.settings = settings }
+        public init(session: @escaping CallSessionFactory) { self.session = session }
     }
 
     private let options: Options
     private let events = Events.shared
     private let lock = NSLock()
     private var stopped = false
-    private var current: Conversation?
+    private var current: CallSession?
 
     public init(options: Options) { self.options = options }
 
@@ -47,12 +50,11 @@ public final class Listener: @unchecked Sendable {
         guard AudioDevice.find(uid: callFeedUID) != nil else {
             throw PuaError("call_feed_missing", "PUA Call Feed not found; reinstall the driver (sudo scripts/install-driver.sh)")
         }
-        // Fail now rather than on the first call: every engine must be usable.
-        let check = try Engines.make(options.settings)
-        try await check.prepare()
-        await check.recognizer.finish()
-        events.emit("listening", ["answer_after": options.answerAfter, "max_calls": options.maxCalls,
-                                  "engines": check.description, "record": options.recordBase?.path ?? NSNull()])
+        var ready = try await options.preflight()
+        ready["answer_after"] = options.answerAfter
+        ready["max_calls"] = options.maxCalls
+        ready["record"] = options.recordBase?.path ?? NSNull()
+        events.emit("listening", ready)
         var calls: [[String: Any]] = []
         while !isStopped, options.maxCalls == 0 || calls.count < options.maxCalls {
             guard let ring = await nextRing() else { break }
@@ -88,17 +90,16 @@ public final class Listener: @unchecked Sendable {
             }
         }
 
-        // Prepare while it rings, so the greeting starts right after Accept.
-        let engines: EngineSet
-        do {
-            engines = try Engines.make(options.settings)
-            try await engines.prepare()
-        } catch {
-            events.emit("listen_error", ["stage": "engines", "error": "\(error)"])
+        // Prepare while it rings, so the agent speaks right after Accept.
+        let info = CallInfo(direction: .incoming, caller: ring.caller,
+                            recordDirectory: options.recordBase.map { CallRecording.folder(in: $0, direction: .incoming) })
+        let session: CallSession
+        do { session = try await options.session(info) } catch {
+            events.emit("listen_error", ["stage": "session", "error": "\(error)"])
             return nil
         }
-        var conversationRan = false
-        defer { if !conversationRan { Task { await engines.recognizer.finish() } } }
+        var sessionRan = false
+        defer { if !sessionRan { Task { await session.discard() } } }
         do {
             events.emit("route", try PhoneRoute.setup(micName: options.micName))
         } catch {
@@ -121,17 +122,12 @@ public final class Listener: @unchecked Sendable {
         }
         events.emit("answered", ["caller": caller, "via": via])
 
-        var settings = options.settings
-        if let base = options.recordBase {
-            settings.recordDirectory = CallRecording.folder(in: base, direction: .incoming)
-        }
-        let conversation = Conversation(settings: settings, engines: engines, audio: options.audio)
-        let interrupted = locked { current = conversation; return stopped }
-        if interrupted { conversation.stop("interrupted") }
-        conversationRan = true
+        let interrupted = locked { current = session; return stopped }
+        if interrupted { session.stop("interrupted") }
+        sessionRan = true
         var summary: [String: Any]
-        do { summary = try await conversation.run() } catch {
-            events.emit("listen_error", ["stage": "conversation", "error": "\(error)"])
+        do { summary = try await session.run() } catch {
+            events.emit("listen_error", ["stage": "session", "error": "\(error)"])
             summary = ["ok": false, "error": "\(error)"]
         }
         locked { current = nil }

@@ -7,7 +7,7 @@ import Foundation
 ///
 /// Half duplex: what the caller says while the agent is speaking is ignored, which also keeps
 /// far-end echo from starting turns.
-public final class Conversation: @unchecked Sendable {
+public final class Conversation: CallSession, @unchecked Sendable {
     /// Where the call's audio is.
     public struct CallAudio: Sendable {
         public var bundleID = "com.apple.avconferenced"
@@ -52,6 +52,8 @@ public final class Conversation: @unchecked Sendable {
     private var agentTrack: [Int16] = []
     private var transcript: [[String: Any]] = []
     private var latencies: [Double] = []
+    private var pendingSays: [String] = []     // ModelEvent.say, spoken when the caller is quiet
+    private var modelHangup = false
 
     /// `engines` must already be prepared (`EngineSet.prepare()`), so setup cost is paid before
     /// the call starts.
@@ -74,7 +76,21 @@ public final class Conversation: @unchecked Sendable {
 
     // MARK: - Run
 
+    /// Talks until the call ends. The reply model always gets `finish(summary:)`, even on failure.
     public func run() async throws -> [String: Any] {
+        do {
+            let summary = try await converse()
+            await engines.model.finish(summary: summary)
+            return summary
+        } catch {
+            await engines.discard()
+            throw error
+        }
+    }
+
+    public func discard() async { await engines.discard() }
+
+    private func converse() async throws -> [String: Any] {
         guard let feedDevice = AudioDevice.find(uid: callFeedUID) else {
             throw PuaError("call_feed_missing", "PUA Call Feed not found; reinstall the driver (sudo scripts/install-driver.sh)")
         }
@@ -98,6 +114,17 @@ public final class Conversation: @unchecked Sendable {
         let results = Task { [self] in
             for await r in engines.recognizer.results { handle(r) }
         }
+        let modelEvents = Task { [self] in
+            guard let stream = engines.model.events else { return }
+            for await e in stream {
+                locked {
+                    switch e {
+                    case .say(let line): pendingSays.append(line)
+                    case .hangup: modelHangup = true
+                    }
+                }
+            }
+        }
 
         if let greeting = settings.openingLine {
             await speakTurn(greeting)
@@ -117,6 +144,22 @@ public final class Conversation: @unchecked Sendable {
                     if Date().timeIntervalSince(idleSince!) >= 2 { stop("call_ended"); break }
                 }
             }
+            // Lines the model wants to say on its own: when the caller is quiet, or before hanging up.
+            let (says, hangupNow) = locked { () -> ([String], Bool) in
+                let quiet = finals.isEmpty && volatileText.isEmpty
+                let out = quiet || modelHangup ? pendingSays : []
+                if !out.isEmpty { pendingSays = [] }
+                return (out, modelHangup && pendingSays.isEmpty)
+            }
+            for line in says where !isStopped { await speakTurn(line) }
+            if hangupNow {
+                if settings.hangUpWhenDone, let source = try? CallControl.perform(.hangup) {
+                    events.emit("hung_up", ["source": source])
+                }
+                stop("agent_hung_up")
+                break
+            }
+            if !says.isEmpty { continue }
             let (text, heardAt, endOfTurn, startedAt) = locked { () -> (String, Date, Bool, Double?) in
                 let text = (finals + [volatileText]).joined(separator: " ").trimmingCharacters(in: .whitespaces)
                 // A trailing unfinalized phrase without end punctuation ("I just want to, um")
@@ -143,6 +186,7 @@ public final class Conversation: @unchecked Sendable {
         while pump.isExecuting { usleep(10_000) }
         await engines.recognizer.finish()
         results.cancel()
+        modelEvents.cancel()
 
         let (left, right, sorted, reason, entries) = locked {
             (callerTrack, agentTrack, latencies.sorted(), stopReason ?? "stopped", transcript)
@@ -152,6 +196,7 @@ public final class Conversation: @unchecked Sendable {
             "direction": settings.direction.rawValue, "engines": engines.description,
             "turns": entries.count, "transcript": entries,
         ]
+        if let caller = settings.caller { summary["caller"] = caller }
         if !sorted.isEmpty {
             summary["reply_latency_s"] = ["median": sorted[sorted.count / 2], "max": sorted.last!]
         }

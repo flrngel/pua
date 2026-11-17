@@ -23,6 +23,10 @@ public struct PuaConfig: Codable, Sendable {
     public struct Listen: Codable, Sendable { public var answerAfter: Double?; public var maxCalls: Int? }
     public struct Record: Codable, Sendable { public var directory: String? }
     public struct Hooks: Codable, Sendable { public var callEnded: [String]? }
+    /// `engines.llm = "exec"`: your agent program, one process per call (docs/integration.md).
+    public struct Exec: Codable, Sendable { public var command: [String]?; public var turnTimeout: Double? }
+    /// Bridge calls to a Twilio Media Streams compatible WebSocket server (docs/integration.md).
+    public struct Stream: Codable, Sendable { public var url: String?; public var hangUpOnClose: Bool? }
 
     public var version: Int?
     public var agent: Agent?
@@ -32,6 +36,8 @@ public struct PuaConfig: Codable, Sendable {
     public var listen: Listen?
     public var record: Record?
     public var hooks: Hooks?
+    public var exec: Exec?
+    public var stream: Stream?
 
     public init() {}
 
@@ -46,6 +52,8 @@ public struct PuaConfig: Codable, Sendable {
         "listen": ["answer_after", "max_calls"],
         "record": ["directory"],
         "hooks": ["call_ended"],
+        "exec": ["command", "turn_timeout"],
+        "stream": ["url", "hang_up_on_close"],
     ]
 
     public static func decode(_ data: Data) throws -> (PuaConfig, warnings: [String]) {
@@ -123,6 +131,12 @@ public struct LoadedConfig {
         if let v = c.conversation?.endOfTurnSilence { s.endOfTurnSilence = v }
         if let v = c.conversation?.maxSeconds { s.maxSeconds = v }
         if let v = c.conversation?.hangUpWhenDone { s.hangUpWhenDone = v }
+        if var argv = c.exec?.command, let program = argv.first {
+            if program.contains("/") || program.hasPrefix("~") { argv[0] = resolve(program).path }
+            s.execCommand = argv
+            if c.engines?.llm == nil { s.llm = "exec" }
+        }
+        if let v = c.exec?.turnTimeout { s.execTurnTimeout = v }
         s.recordDirectory = callFolder(direction: direction)
         return s
     }
@@ -141,6 +155,8 @@ public struct LoadedConfig {
         return argv
     }
     public var answerAfter: Double { config.listen?.answerAfter ?? 0 }
+    public var streamURL: String? { config.stream?.url.flatMap { $0.isEmpty ? nil : $0 } }
+    public var streamHangUpOnClose: Bool { config.stream?.hangUpOnClose ?? true }
     public var maxCalls: Int { config.listen?.maxCalls ?? 0 }
 }
 
@@ -166,6 +182,12 @@ public struct ConversationSettings: Sendable {
     public var hangUpWhenDone = true
     /// The folder for this conversation's recording; nil records nothing.
     public var recordDirectory: URL?
+    /// The caller as macOS shows it (incoming), or the dialed number (outgoing), when known.
+    public var caller: String?
+    /// The agent program for `engines.llm = "exec"`.
+    public var execCommand: [String]?
+    /// Longest wait for the agent's `end_turn`.
+    public var execTurnTimeout = 60.0
 
     public init(direction: Direction) {
         self.direction = direction
@@ -230,6 +252,7 @@ public struct ConversationSettings: Sendable {
             "end_of_turn_silence": endOfTurnSilence, "max_seconds": maxSeconds, "hang_up_when_done": hangUpWhenDone,
             "record_directory": recordDirectory?.path ?? NSNull(),
         ]
+        if let execCommand { o["exec"] = ["command": execCommand, "turn_timeout": execTurnTimeout] }
         if let voiceID { o["voice_id"] = voiceID }
         if let voiceModel { o["voice_model"] = voiceModel }
         return o

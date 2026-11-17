@@ -3,10 +3,10 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.4.2"
+let version = "0.5.0"
 
 let usage = """
-pua \(version): tunnel iPhone (Continuity) calls on a Mac to an agent
+pua \(version): put an agent on iPhone calls from a Mac (integration guide: docs/integration.md)
 
 Setup and status
   pua doctor                      prerequisites, each with its next action (JSON)
@@ -28,17 +28,22 @@ Calls
 Audio route (Phone app Audio menu)
   pua route status | setup [--mic NAME] | restore
 
-Conversation (on-device speech recognition + language model; settings: docs/configuration.md)
-  pua converse [--dial NUMBER] [--route] [--record DIR] [conversation flags]
-                                  talk on an outgoing or already connected call
-  pua listen [--answer-after S] [--max-calls N | --once] [--record DIR] [conversation flags]
-                                  wait for incoming calls, answer each and talk (Ctrl-C stops)
+Agents on calls (settings: docs/configuration.md)
+  pua converse [--dial NUMBER] [--route] [--record DIR] [agent] [conversation flags]
+                                  an outgoing or already connected call
+  pua listen [--answer-after S] [--max-calls N | --once] [--record DIR] [agent] [conversation flags]
+                                  wait for incoming calls and answer each (Ctrl-C stops)
+  pua stream URL [--dial NUMBER] [--route] [--record DIR]
+                                  same as converse --stream URL
   pua config show [--config FILE] the resolved settings and where they came from
+    agent (default: pua's built-in conversation with the configured engines):
+      --exec CMD     your text agent: JSON lines on stdin/stdout, one process per call
+      --stream URL   your voice agent: a Twilio Media Streams compatible WebSocket server
     conversation flags (override the config file):
       --config FILE  --name NAME  --instructions TEXT | --instructions-file F
       --greeting TEXT | --no-greeting  --locale ID  --stt NAME  --llm NAME
       --tts system|elevenlabs  --voice ID  --tts-model ID  --max-seconds N  --end-silence S
-      --no-hangup  --no-call-guard  --pid PID  --process BUNDLE_ID
+      --turn-timeout S  --no-hangup  --no-call-guard  --pid PID  --process BUNDLE_ID
 
 Duplex audio (stdin PCM16 LE 48 kHz mono → caller; stdout ← caller; stderr JSONL)
   pua audio-stream [--route] [--monitor] [--max-seconds N] [--stop-after-playback]
@@ -93,11 +98,98 @@ func conversationSettings(_ direction: ConversationSettings.Direction, _ loaded:
     if let v = args.value("--max-seconds").flatMap(Double.init) { s.maxSeconds = v }
     if let v = args.value("--end-silence").flatMap(Double.init) { s.endOfTurnSilence = v }
     if args.flag("--no-hangup") { s.hangUpWhenDone = false }
+    if let cmd = args.value("--exec") { s.execCommand = ["/bin/sh", "-c", cmd]; s.llm = "exec" }
+    if let v = args.value("--turn-timeout").flatMap(Double.init) { s.execTurnTimeout = v }
     var audio = Conversation.CallAudio()
     if let p = args.value("--process") { audio.bundleID = p }
     audio.pids = args.values("--pid").compactMap { pid_t($0) }
     audio.callGuard = !args.flag("--no-call-guard")
     return (s, audio)
+}
+
+/// What runs on the call: a stream bridge when `--stream`/`stream.url` is set, else pua's conversation.
+struct SessionPlan {
+    var factory: CallSessionFactory
+    var preflight: @Sendable () async throws -> [String: Any]
+    var recordDirectory: URL?
+}
+
+func sessionPlan(_ direction: ConversationSettings.Direction, _ loaded: LoadedConfig, _ args: inout Args,
+                 streamURL: String? = nil) throws -> SessionPlan {
+    let explicitMax = args.items.contains("--max-seconds") || loaded.config.conversation?.maxSeconds != nil
+    let (settings, audio) = try conversationSettings(direction, loaded, &args)
+    guard let url = try (args.value("--stream") ?? streamURL ?? loaded.streamURL).map(MediaStreamBridge.validate) else {
+        let check = settings
+        return SessionPlan(factory: CallSessions.conversation(settings, audio: audio),
+                           preflight: { try await CallSessions.check(check) },
+                           recordDirectory: settings.recordDirectory)
+    }
+    var o = MediaStreamBridge.Options(url: url)
+    o.audio = audio
+    o.direction = direction
+    o.hangUpOnClose = settings.hangUpWhenDone && loaded.streamHangUpOnClose
+    if explicitMax { o.maxSeconds = settings.maxSeconds }
+    let target = url.absoluteString
+    return SessionPlan(factory: CallSessions.stream(o), preflight: { ["stream": target] },
+                       recordDirectory: settings.recordDirectory)
+}
+
+/// `converse` and `stream`: an outgoing call (`--dial`) or one that is already connected.
+func runOutgoing(_ loaded: LoadedConfig, _ args: inout Args, streamURL: String? = nil) throws -> [String: Any] {
+    let record = args.value("--record").map { URL(fileURLWithPath: $0) }
+    let dial = args.value("--dial")
+    let route = args.flag("--route") || dial != nil
+    var plan = try sessionPlan(.outgoing, loaded, &args, streamURL: streamURL)
+    plan.recordDirectory = record ?? plan.recordDirectory
+    let factory = plan.factory, recordDirectory = plan.recordDirectory
+    final class Current: @unchecked Sendable { var session: CallSession? }
+    let current = Current()
+    return try runAsync(interrupt: {
+        if let c = current.session { c.stop("interrupted") } else {
+            if route { PhoneRoute.restoreAndReport() }
+            exit(130)
+        }
+    }) {
+        // Prepare before dialing: a missing model, key or agent fails before anyone's phone rings.
+        let session = try await factory(CallInfo(direction: .outgoing, caller: dial, recordDirectory: recordDirectory))
+        do {
+            if route { Events.shared.emit("route", try PhoneRoute.setup(micName: "PUA Call Mic")) }
+            if let number = dial { try dialAndWait(number) }
+        } catch {
+            await session.discard()
+            if route { PhoneRoute.restoreAndReport() }
+            throw error
+        }
+        defer { if route { PhoneRoute.restoreAndReport() } }
+        current.session = session
+        let summary = try await session.run()
+        Hooks.run(loaded.callEndedHook, event: "call_ended", payload: summary)
+        Hooks.waitForRunning(timeout: 30)
+        return summary
+    }
+}
+
+func dialAndWait(_ number: String) throws {
+    let ready = DispatchSemaphore(value: 0)
+    let done = DispatchSemaphore(value: 0)
+    final class Result: @unchecked Sendable { var value: String? }
+    let connected = Result()
+    Thread {
+        connected.value = CallControl.waitForConnection(timeout: 120) { ready.signal() }
+        done.signal()
+    }.start()
+    _ = ready.wait(timeout: .now() + 3)
+    try Dialer.dialViaShortcut(number)
+    Events.shared.emit("dialed")
+    while done.wait(timeout: .now() + 0.25) == .timedOut {
+        if let notice = CallControl.relayUnavailableNotice(dismiss: true) {
+            throw PuaError("iphone_calls_unavailable", notice)
+        }
+    }
+    guard connected.value == "connected" else {
+        throw PuaError("not_connected", "call \(connected.value ?? "timed out") before answer")
+    }
+    Events.shared.emit("connected")
 }
 
 func loadConfig(_ args: inout Args) throws -> LoadedConfig {
@@ -267,62 +359,24 @@ do {
 
     case "converse":
         let loaded = try loadConfig(&args)
-        var (settings, audio) = try conversationSettings(.outgoing, loaded, &args)
-        settings.recordDirectory = args.value("--record").map { URL(fileURLWithPath: $0) } ?? loaded.callFolder(direction: .outgoing)
-        let dial = args.value("--dial")
-        let route = args.flag("--route") || dial != nil
-        final class Current: @unchecked Sendable { var conversation: Conversation? }
-        let current = Current()
-        let summary = try runAsync(interrupt: {
-            if let c = current.conversation { c.stop("interrupted") } else {
-                if route { PhoneRoute.restoreAndReport() }
-                exit(130)
-            }
-        }) {
-            // Prepare before dialing: a missing model or key fails before anyone's phone rings.
-            let engines = try Engines.make(settings)
-            try await engines.prepare()
-            if route { Events.shared.emit("route", try PhoneRoute.setup(micName: "PUA Call Mic")) }
-            defer { if route { PhoneRoute.restoreAndReport() } }
-            if let number = dial {
-                let ready = DispatchSemaphore(value: 0)
-                let done = DispatchSemaphore(value: 0)
-                final class Result: @unchecked Sendable { var value: String? }
-                let connected = Result()
-                Thread {
-                    connected.value = CallControl.waitForConnection(timeout: 120) { ready.signal() }
-                    done.signal()
-                }.start()
-                _ = ready.wait(timeout: .now() + 3)
-                try Dialer.dialViaShortcut(number)
-                Events.shared.emit("dialed")
-                while done.wait(timeout: .now() + 0.25) == .timedOut {
-                    if let notice = CallControl.relayUnavailableNotice(dismiss: true) {
-                        throw PuaError("iphone_calls_unavailable", notice)
-                    }
-                }
-                guard connected.value == "connected" else {
-                    throw PuaError("not_connected", "call \(connected.value ?? "timed out") before answer")
-                }
-                Events.shared.emit("connected")
-            }
-            let conversation = Conversation(settings: settings, engines: engines, audio: audio)
-            current.conversation = conversation
-            let summary = try await conversation.run()
-            Hooks.run(loaded.callEndedHook, event: "call_ended", payload: summary)
-            Hooks.waitForRunning(timeout: 30)
-            return summary
-        }
-        printJSON(summary)
+        printJSON(try runOutgoing(loaded, &args))
+
+    case "stream":
+        guard let url = args.next(), !url.hasPrefix("--") else { print(usage); exit(64) }
+        let loaded = try loadConfig(&args)
+        printJSON(try runOutgoing(loaded, &args, streamURL: url))
 
     case "listen":
         let loaded = try loadConfig(&args)
-        let (settings, audio) = try conversationSettings(.incoming, loaded, &args)
-        var o = Listener.Options(settings: settings)
-        o.audio = audio
-        o.recordBase = args.value("--record").map { URL(fileURLWithPath: $0) } ?? loaded.recordBase
-        o.answerAfter = args.value("--answer-after").flatMap(Double.init) ?? loaded.answerAfter
-        o.maxCalls = args.flag("--once") ? 1 : (args.value("--max-calls").flatMap(Int.init) ?? loaded.maxCalls)
+        let record = args.value("--record").map { URL(fileURLWithPath: $0) } ?? loaded.recordBase
+        let answerAfter = args.value("--answer-after").flatMap(Double.init) ?? loaded.answerAfter
+        let maxCalls = args.flag("--once") ? 1 : (args.value("--max-calls").flatMap(Int.init) ?? loaded.maxCalls)
+        let plan = try sessionPlan(.incoming, loaded, &args)
+        var o = Listener.Options(session: plan.factory)
+        o.preflight = plan.preflight
+        o.recordBase = record
+        o.answerAfter = answerAfter
+        o.maxCalls = maxCalls
         o.callEndedHook = loaded.callEndedHook
         let listener = Listener(options: o)
         let summary = try runAsync(interrupt: { listener.stop() }) { try await listener.run() }
@@ -340,6 +394,7 @@ do {
             "listen": ["answer_after": loaded.answerAfter, "max_calls": loaded.maxCalls],
             "record_directory": loaded.recordBase?.path ?? NSNull(),
             "hooks": ["call_ended": loaded.callEndedHook ?? []],
+            "stream": ["url": loaded.streamURL.map { $0 as Any } ?? NSNull(), "hang_up_on_close": loaded.streamHangUpOnClose] as [String: Any],
             "engines_available": ["stt": Engines.recognizers.keys.sorted(), "llm": Engines.models.keys.sorted(),
                                   "tts": Engines.voices.keys.sorted()],
         ])
