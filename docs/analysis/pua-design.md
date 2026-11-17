@@ -76,6 +76,7 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 | 0.5.0 offline: `swift test` (11 tests, including the exec protocol against `clock_agent.py`, unprompted `say`/`hangup`, μ-law round trip) | All pass |
 | 0.5.0 `pua converse --exec "python3 examples/agents/clock_agent.py"` against a scripted caller (no phone) | "What time is it right now?" → "It's 8:46 PM." (1.98 s); "Okay, thanks. Bye." → goodbye, `agent_hung_up`; the agent got `call_end` |
 | 0.5.0 `pua stream ws://127.0.0.1:…` against a local test server and a scripted caller | `connected`, `start` (μ-law 8 kHz); caller `media` at 50/s, 160 bytes each, speech present; `mark` after 1 s of audio came back at 1.04 s; `clear` returned the pending mark in 0.01 s; server close ended the session (`stream_closed`) and the recording was written |
+| Live incoming call with `pua listen --once --answer-after 3 --record --exec "python3 examples/agents/clock_agent.py"` (2026-11-16, 0.5.0) | Caller name read from the banner (`ringing` and the agent's `call_start`); answered (AX) 1.4 s after Accept; the agent told the time correctly; 4 caller turns, reply gap median 1.55 s (max 1.57 s); "Goodbye." → agent goodbye, pua hung up (`agent_hung_up`, 43.7 s); mic restored |
 | 0.5.0 `pua stream` against `examples/agents/stream_echo.py` | Caller phrase at 0.4 s echoed back from 2.4 s; `mark` returned; `stop` sent at `--max-seconds` |
 | VoiceProcessingIO on `PUA Call Mic` while `audio-stream` plays the demo (no call) | Driver 0.1: −61 then −86 to −138 dBFS (cancelled). Driver 0.2: −13 to −34 dBFS for the whole clip. |
 
@@ -84,14 +85,13 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 * **Call UI:** observed live for outgoing relay calls: the call lives in a Notification Center
   banner (`FACETIME_NOTIFICATION`) with `Mute`, `Keypad`, `More` and `End`, and the label
   `<contact>, Using Your iPhone - 0:02`. Incoming-call labels (`Accept`, `Answer`, `Decline`) have not been observed live yet.
-* **Answering:** verified live twice, with the Mac unlocked. The caller label lives in a generic
-  element's description; 0.4.2 reads it (unit test on the captured shape), but `ringing` with a
-  caller name has not been seen live yet. Answering while the Mac is locked is untested
-  (probably not: Accessibility needs an unlocked session).
+* **Answering:** verified live three times, with the Mac unlocked. The caller name comes from
+  the banner (seen live in 0.5.0). Answering while the Mac is locked is untested (probably not:
+  Accessibility needs an unlocked session).
 * **No live data in the built-in agent:** the on-device model cannot look things up (weather,
   news). Attach an agent with tools through `--exec` instead.
-* **External agents on live calls:** `--exec` and `--stream` are verified offline only (a scripted
-  caller, a local server). Pipecat is untested; `--stream` does not send `dtmf`.
+* **External agents on live calls:** `--exec` verified on a live incoming call; `--stream` offline
+  only (a local server). Pipecat is untested; `--stream` does not send `dtmf`.
 * **Media process:** `avconferenced` confirmed live (`running_output`, `VCAudioIO`, VPIO aggregate).
 * **Per-call isolation:** the tap covers the whole `avconferenced` process (FaceTime audio would
   be included too).

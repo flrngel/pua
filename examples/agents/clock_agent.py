@@ -26,7 +26,7 @@ def answer(text):
         return f"It's {datetime.now().strftime('%-I:%M %p')}.", False
     if "date" in words or "day" in words:
         return f"Today is {datetime.now().strftime('%A, %B %-d')}.", False
-    return f"You said: {text}. Ask me the time or the date, or say goodbye.", False
+    return f"You said: {text.rstrip('.!?')}. Ask me the time or the date, or say goodbye.", False
 
 
 for line in sys.stdin:
