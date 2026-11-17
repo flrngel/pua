@@ -76,7 +76,7 @@ public final class Listener: @unchecked Sendable {
         return nil
     }
 
-    /// Answers and talks. Returns the call summary (without the transcript), or nil when the call
+    /// Answers and talks. Returns the call summary (with the transcript), or nil when the call
     /// was not answered by pua.
     private func take(_ ring: CallControl.Snapshot) async -> [String: Any]? {
         let caller: Any = ring.caller ?? NSNull()
@@ -134,8 +134,9 @@ public final class Listener: @unchecked Sendable {
         summary["caller"] = caller
         summary["answered_via"] = via
         Hooks.run(options.callEndedHook, event: "call_ended", payload: summary)
-        summary["transcript"] = nil
-        events.emit("call_finished", summary)
+        var event = summary
+        event["transcript"] = nil
+        events.emit("call_finished", event)
         return summary
     }
 

@@ -125,3 +125,29 @@ import Testing
     #expect(seen == ["say:One moment.", "hangup"])
     await model.finish(summary: ["reason": "test", "transcript": []])
 }
+
+@Test func builtInSkillMatchesTheRepositoryCopy() throws {
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let file = try String(contentsOf: repo.appendingPathComponent("skills/phone-use/SKILL.md"), encoding: .utf8)
+    #expect(file == PhoneUseSkill.markdown, "run scripts/embed-skill.sh (or make) after editing SKILL.md")
+    #expect(file.hasPrefix("---\nname: phone-use\ndescription: "))
+}
+
+@Test func skillInstallsWithThisPuaAndUninstallsOnlyItsOwn() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pua-skill-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let results = PhoneUseSkill.install(into: [root], puaPath: "/opt/pua/bin/pua", version: "9.9")
+    #expect(results.first?["action"] as? String == "installed")
+    let text = try String(contentsOf: root.appendingPathComponent("phone-use/SKILL.md"), encoding: .utf8)
+    #expect(text.hasPrefix(PhoneUseSkill.markdown))
+    #expect(text.contains("pua is at `/opt/pua/bin/pua` (version 9.9)"))
+    #expect(PhoneUseSkill.install(into: [root], puaPath: "/opt/pua/bin/pua", version: "9.9").first?["action"] as? String == "unchanged")
+    #expect(PhoneUseSkill.uninstall(from: [root]).first?["action"] as? String == "removed")
+
+    let other = root.appendingPathComponent("phone-use/SKILL.md")
+    try FileManager.default.createDirectory(at: other.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "someone else's skill".write(to: other, atomically: true, encoding: .utf8)
+    #expect(PhoneUseSkill.install(into: [root], puaPath: "/x", version: "1").first?["ok"] as? Bool == false)
+    #expect(PhoneUseSkill.uninstall(from: [root]).first?["ok"] as? Bool == false)
+    #expect(FileManager.default.fileExists(atPath: other.path))
+}

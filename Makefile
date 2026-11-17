@@ -5,6 +5,7 @@ SIGN_IDENTITY ?= -
 all: cli driver
 
 cli:
+	sh scripts/embed-skill.sh
 	swift build -c release
 	@echo "CLI: .build/release/pua"
 

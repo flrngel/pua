@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.5.1"
+let version = "0.6.0"
 
 let usage = """
 pua \(version): phone-use for AI agents (iPhone calls on a Mac; agents: docs/integration.md)
@@ -15,6 +15,8 @@ Setup and status
   pua processes                   Core Audio client processes; find the call renderer during a call
   pua selftest                    prove the tap (downlink) and PUA Call Mic (uplink) legs, no call needed
   pua shortcut install [--name N] build, sign and import the "PUA Dial" shortcut
+  pua skill install [--dir DIR]   teach agent harnesses phone-use (Claude Code, Codex, …)
+  pua skill uninstall [--dir DIR] | show
 
 Calls
   pua call state [--watch]        idle | incoming | active (+ caller, timer)
@@ -256,6 +258,29 @@ do {
         if !args.flag("--no-import") { try Dialer.importShortcut(file, name: name) }
         printJSON(["ok": true, "file": file.path, "installed": Dialer.shortcutInstalled(name),
                    "next": "the first dial asks to allow the Call action once"])
+
+    case "skill":
+        let folders = args.values("--dir").map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+        let targets = folders.isEmpty ? PhoneUseSkill.defaultFolders() : folders
+        switch args.next() {
+        case "install":
+            // The path it was run by (for example .build/release/pua), not SwiftPM's internal folder.
+            let arg0 = CommandLine.arguments[0]
+            let exe = (arg0.contains("/") ? URL(fileURLWithPath: arg0) : (Bundle.main.executableURL ?? URL(fileURLWithPath: arg0)))
+                .standardizedFileURL.path
+            let results = PhoneUseSkill.install(into: targets, puaPath: exe, version: version)
+            let ok = results.allSatisfy { $0["ok"] as? Bool == true }
+            printJSON(["ok": ok, "skill": PhoneUseSkill.name, "results": results,
+                       "next": "start a new session in your agent and ask it to make a call"])
+            if !ok { exit(1) }
+        case "uninstall":
+            let results = PhoneUseSkill.uninstall(from: targets)
+            printJSON(["ok": results.allSatisfy { $0["ok"] as? Bool == true }, "results": results])
+        case "show":
+            print(PhoneUseSkill.markdown, terminator: "")
+        default:
+            print(usage); exit(64)
+        }
 
     case "call":
         switch args.next() {
