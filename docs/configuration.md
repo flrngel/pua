@@ -1,7 +1,7 @@
 # Configuration
 
-`pua converse` (outgoing calls) and `pua listen` (incoming calls) read the same JSON config
-file. Every key is optional: a missing key keeps the built-in default. Command-line flags
+`pua converse` and `pua stream` (outgoing calls) and `pua listen` (incoming calls) read the
+same JSON config file. Every key is optional: a missing key keeps the built-in default. Command-line flags
 override the file.
 
 pua uses the first of these that exists:
@@ -64,6 +64,10 @@ Relative paths start at the folder of the config file; `~` expands to your home 
 | `listen.max_calls` | number | `0` (no limit) | `--max-calls`, `--once` | Calls to answer before `listen` exits. |
 | `record.directory` | path | off | `--record` | Records each call into `<directory>/<yyyyMMdd-HHmmss>-in` or `-out`. `converse --record DIR` writes into `DIR` itself. |
 | `hooks.call_ended` | command | | | Runs after each call; see [Hooks](#hooks). |
+| `exec.command` | command | | `--exec CMD` | Your text agent, one process per call. Selects `engines.llm: "exec"` unless `engines.llm` is set. See [integration.md](integration.md#text-agents---exec). |
+| `exec.turn_timeout` | seconds | `60` | `--turn-timeout` | Longest wait for the agent's `end_turn` |
+| `stream.url` | `ws://` or `wss://` URL | | `--stream URL` | Bridge each call to a Twilio Media Streams compatible voice agent instead of pua's conversation. See [integration.md](integration.md#voice-agents---stream). |
+| `stream.hang_up_on_close` | bool | `true` | `--no-hangup` | Hang up when the agent closes the WebSocket |
 
 Engines available in this build: `pua config show` lists them under `engines_available`.
 Adding one is described in [CONTRIBUTING.md](../CONTRIBUTING.md).
@@ -123,16 +127,18 @@ pua. [examples/hooks/notify.sh](../examples/hooks/notify.sh) shows a macOS notif
 | Event | When |
 | --- | --- |
 | `config_warning` | An unknown key or a newer config version |
-| `listening` | `listen` is ready for calls |
 | `ringing` | An incoming call rings (`caller` is the label macOS shows) |
 | `missed`, `answered_elsewhere` | The call stopped ringing before pua answered |
 | `route`, `route_restored` | The Phone microphone was switched to PUA Call Mic, then back |
 | `answering`, `answered` | pua pressed Accept; the call connected (`via`: `ax` or `callservicesd`) |
 | `answer_failed` | The call did not connect within 10 s of pressing Accept |
 | `dialed`, `connected` | `converse --dial` placed the call; the far end answered |
+| `listening` | `listen` is ready (`engines`, or `stream`) |
 | `conversation_ready` | Audio is flowing; lists the engines |
 | `heard`, `said` | A caller turn; an agent turn (`latency_s` from the end of the caller's speech) |
 | `hung_up` | The agent ended the call |
 | `call_finished` | `listen` finished a call (the summary without the transcript) |
 | `hook_finished`, `hook_error` | A hook exited, or could not start |
+| `agent_log`, `agent_exited` | An `exec` agent's `log` message or stderr line; the agent exited before the call ended |
+| `stream_ready`, `stream_clear`, `stream_closed` | The stream bridge is up (`stream_sid`, `call_sid`); the agent cleared queued audio; the agent closed the socket |
 | `stt_error`, `llm_error`, `tts_error`, `listen_error` | A failure; the conversation goes on where it can |

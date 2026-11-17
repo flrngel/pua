@@ -1,9 +1,11 @@
 # pua
 
-Tunnel your iPhone's cellular calls through your Mac to a program or AI agent: dial, answer,
-hang up, hear the caller and speak into the call. An on-device AI can place calls
-(`pua converse`) or answer them (`pua listen`). It is built on Apple Continuity
-("Calls on Other Devices") and the macOS Phone app. Nothing runs on the iPhone.
+Put your own agent on your iPhone's phone calls, from a Mac. pua handles the phone side:
+dialing, answering, hanging up, getting audio in and out of the call, recording, and hooks. Your
+agent does the talking, as a text agent over JSON lines, a voice agent over a
+Twilio-compatible WebSocket, or a program reading raw audio. A built-in on-device agent covers
+basic use. pua is built on Apple Continuity ("Calls on Other Devices") and the macOS Phone app.
+Nothing runs on the iPhone.
 
 How and why it works this way: [ANALYSIS.md](ANALYSIS.md) (the mechanism, with evidence) and
 [docs/analysis/pua-design.md](docs/analysis/pua-design.md) (design and verification).
@@ -13,7 +15,25 @@ iPhone ─Continuity─▶ avconferenced ──process tap (muted)──▶ pua 
                       Phone.app mic ◀── PUA Call Mic ◀ PUA Call Feed ◀── pua stdin (PCM16 48k mono: you/agent)
 ```
 
-## Demo: a phone conversation with an AI
+## Attach your agent
+
+| Your agent | Flag | It gets |
+| --- | --- | --- |
+| Text in, text out (an LLM harness, a tool-using agent) | `--exec CMD` | Each caller turn as text, one process per call. pua does speech recognition, voice and turn-taking. |
+| A voice agent (speech-to-speech, a bot built for Twilio) | `--stream URL` | The call as Twilio Media Streams messages: μ-law audio, `mark` and `clear` for interruptions |
+| Any program | `pua audio-stream` | PCM16 48 kHz on stdin and stdout, plus `pua call …` for control |
+
+```sh
+pua listen --answer-after 8 --exec "python3 examples/agents/clock_agent.py"   # answer incoming calls
+pua converse --dial "+1 555 0100" --exec "python3 my_agent.py"               # place a call
+pua stream ws://127.0.0.1:8765 --dial "+1 555 0100"                          # a voice agent on the call
+```
+
+[docs/integration.md](docs/integration.md) has both protocols, the example agents in
+[examples/agents](examples/agents), and notes for Pipecat. Without `--exec` or `--stream`, pua
+uses its built-in agent (below).
+
+## Demo: the built-in agent on a call
 
 A live call from the Mac to an iPhone, recorded with `pua converse --dial … --record`
 (2026-11-16, 87 s). Jessica hears the caller with Apple's on-device speech recognition, thinks
@@ -110,7 +130,7 @@ Flags:
 
 Stopping `audio-stream` never hangs up the call.
 
-### AI conversations
+### Built-in agent
 
 ```sh
 # Outgoing: dial, talk, record. With ELEVENLABS_API_KEY set the agent uses ElevenLabs; otherwise the macOS voice.
@@ -141,7 +161,8 @@ Events go to stderr as JSON lines (`ringing`, `answered`, `heard`, `said`, `call
 ## Safety
 
 `pua` acts only on explicit commands. It answers calls only while `pua listen` runs, and records
-audio only with `--record` (or `record.directory`). The default greetings tell the caller they are
+audio only with `--record` (or `record.directory`). Call audio goes only where you point it: an
+`--exec` agent gets text, a `--stream` server gets the audio. The default greetings tell the caller they are
 talking to an AI, and that the call is recorded when it is. Keep that disclosure when you change the greeting, and follow your
 local call-recording laws. Speech recognition and the language model run on the Mac. With
 ElevenLabs TTS, only the agent's reply text is sent to ElevenLabs.
@@ -153,7 +174,8 @@ and the known gaps. Uninstall the driver with `sudo scripts/uninstall-driver.sh`
 
 ## Extending
 
-Speech recognition, the reply model and the voice are pluggable engines selected by name in the
+Agents attach without Swift: see [docs/integration.md](docs/integration.md). Inside pua, speech
+recognition, the reply model and the voice are pluggable engines selected by name in the
 config. [CONTRIBUTING.md](CONTRIBUTING.md) maps the code, shows how to add an engine or a config
 key, and lists the checks that need no phone (`swift test`, `pua selftest`, an offline
 conversation).

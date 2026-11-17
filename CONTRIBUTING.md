@@ -16,9 +16,12 @@ How the call path works, with evidence, is in [ANALYSIS.md](ANALYSIS.md) and
 | `Sources/PuaKit/Conversation/Engines.swift` | **Extension points**: `SpeechRecognizer`, `ReplyModel`, `Voice` and the name registry |
 | `Sources/PuaKit/Conversation/AppleEngines.swift` | `apple` STT (SpeechTranscriber) and `apple` LLM (Foundation Models) |
 | `Sources/PuaKit/Conversation/Voices.swift` | `system` (macOS voice) and `elevenlabs` TTS |
+| `Sources/PuaKit/CallSession.swift` | `CallSession`: what runs on a connected call (pua's `Conversation` or a `MediaStreamBridge`), and the per-call factories |
+| `Sources/PuaKit/Conversation/ExecModel.swift` | `exec` LLM: your agent process, JSON lines (docs/integration.md) |
+| `Sources/PuaKit/MediaStream.swift` | `--stream`: Twilio Media Streams compatible WebSocket bridge, μ-law, resampling |
 | `Sources/PuaKit/Conversation/Conversation.swift` | Turn-taking on a connected call: half duplex, end of turn, latency, `[hangup]` |
 | `Sources/PuaKit/Conversation/Recording.swift` | WAV, transcripts, `call.json` |
-| `Sources/PuaKit/Listen.swift` | `pua listen`: ring, delay, route, answer, converse, restore, repeat |
+| `Sources/PuaKit/Listen.swift` | `pua listen`: ring, delay, route, answer, run the session, restore, repeat |
 | `Sources/PuaKit/Hooks.swift` | Runs `hooks.*` commands |
 | `Sources/PuaKit/CallControl.swift` | Call state and buttons through Accessibility; callservicesd log watch |
 | `Sources/PuaKit/PhoneRoute.swift` | Phone app *Audio* menu: point the microphone at PUA Call Mic and back |
@@ -27,7 +30,7 @@ How the call path works, with evidence, is in [ANALYSIS.md](ANALYSIS.md) and
 | `Sources/PuaKit/AudioStream.swift` | `audio-stream`: raw PCM in and out for external agents |
 | `Driver/PuaCallMic.c` | The HAL driver: `PUA Call Mic` (input) and `PUA Call Feed` (output) on one ring |
 | `Tests/PuaKitTests` | Offline tests (`swift test`) |
-| `examples/` | A config, a prompt file and a hook script |
+| `examples/` | A config, a prompt file, a hook script, and example agents for `--exec` and `--stream` |
 
 ## How a conversation runs
 
@@ -40,10 +43,11 @@ caller ─▶ avconferenced ─tap─▶ Conversation ─▶ SpeechRecognizer.ap
                                     └─▶ Voice.speak(sentence, to: SpeechOutput) ─▶ PUA Call Feed ─▶ caller
 ```
 
-`converse` and `listen` differ only in how the call starts: `converse` dials (or joins a
-connected call), `listen` waits for one to ring and answers it. Both build
-`ConversationSettings`, create a fresh `EngineSet` per call, `prepare()` it before the call
-connects, and hand it to `Conversation`.
+`converse`, `stream` and `listen` differ only in how the call starts: `converse` and `stream`
+dial (or join a connected call), `listen` waits for one to ring and answers it. Each makes one
+`CallSession` per call through a `CallSessionFactory`, before the call connects: a
+`Conversation` with a fresh, prepared `EngineSet`, or a `MediaStreamBridge` to `--stream`. A
+session that never runs gets `discard()`, so an `exec` agent always receives `call_end`.
 
 ## Add an engine
 
@@ -111,6 +115,8 @@ the old form.
 
 ## Extend without Swift
 
+* **Your own agent.** `--exec CMD` (text in, text out) or `--stream URL` (a voice agent speaking
+  Twilio Media Streams). See [docs/integration.md](docs/integration.md).
 * **Hooks.** `hooks.call_ended` gets every call's summary and transcript as JSON on stdin.
   Summaries, message delivery and logging can live there. See
   [docs/configuration.md](docs/configuration.md#hooks).
@@ -129,6 +135,8 @@ the old form.
 | Config keys and their meaning | `PuaConfig`, docs/configuration.md |
 | Recording files and transcript fields | `Recording.swift` |
 | The `[hangup]` marker and the call rules | `Conversation.callRules` |
+| The `exec` agent protocol (message types and fields) | `ExecModel.swift`, docs/integration.md |
+| The stream message set, μ-law 8 kHz, mark and clear semantics | `MediaStream.swift`, docs/integration.md |
 
 ## Check a change
 
@@ -138,7 +146,8 @@ Start with the cheapest check that covers your change.
 | --- | --- |
 | Config, prompts, splitting | `swift test` |
 | Audio path or driver | `pua selftest` (no call needed) |
-| A conversation engine | The offline conversation below |
+| A conversation engine, or the `exec` protocol | `swift test`, then the offline conversation below with `--exec` |
+| The stream bridge | The offline conversation below with `pua stream` and `examples/agents/stream_echo.py` |
 | Dialing, answering, routing | One real call |
 
 An offline conversation plays a scripted caller with `afplay`. pua taps that process instead of

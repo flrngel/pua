@@ -16,6 +16,9 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 | Engines, chosen by name: `apple` STT (`SpeechTranscriber`, on-device), `apple` LLM (Foundation Models, on-device), `system` (`AVSpeechSynthesizer`) and `elevenlabs` (streaming PCM) voices | `Sources/PuaKit/Conversation/Engines.swift`, `AppleEngines.swift`, `Voices.swift` |
 | Incoming calls (`listen`): ring → optional delay → prepare engines and route the mic while ringing → AX Accept → connected (AX or callservicesd) → conversation → restore the mic → hook | `Sources/PuaKit/Listen.swift`, `Hooks.swift` |
 | Config file and resolved settings (lookup, typo warnings, per-direction default prompts) | `Sources/PuaKit/Config.swift` |
+| Call sessions: what runs on a connected call (pua's conversation or a stream bridge), made per call before it connects | `Sources/PuaKit/CallSession.swift` |
+| `exec` reply model: the user's agent process per call, JSON lines (`call_start`, `turn` → `text`/`end_turn`, `say`, `hangup`, `call_end`) | `Sources/PuaKit/Conversation/ExecModel.swift` |
+| Stream bridge: Twilio Media Streams messages over a WebSocket client, μ-law 8 kHz ↔ 48 kHz, `mark` on playback, `clear` empties the queue | `Sources/PuaKit/MediaStream.swift` |
 | Call UI: state, answer, decline and hang up through AX | `Sources/PuaKit/CallControl.swift` |
 | Phone *Audio* menu route with a journal: activate Phone, open the menu, press, verify, restore | `Sources/PuaKit/PhoneRoute.swift` |
 | Dial: generate and sign the "PUA Dial" Shortcut, run it with `--input-path` | `Sources/PuaKit/Dialer.swift` |
@@ -38,6 +41,8 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 | Plain PCM16 on stdin and stdout, JSONL on stderr | Existing STT/TTS pipes (whisper.cpp, `say`, cloud TTS) plug in unchanged. | README examples |
 | Engines behind protocols with a name registry | STT, model and voice change faster than the call path. A new engine is one file and one table entry; the config selects it. Turn-taking stays in one place, so every engine gets the same timing behaviour. | `swift test`; offline conversation with the refactored engines |
 | Route the mic per incoming call, while it rings | Leaving the Phone mic on PUA Call Mic between calls would silence the owner on calls they answer themselves. Ring time covers the route switch and engine setup, so the greeting starts right after Accept. | Live incoming call 2026-11-16: the banner stayed up while Phone was brought forward; Accept 1.4 s after the ring |
+| Two adapters for external agents: `exec` (text) and `stream` (audio) | Agent builders bring either a text brain (harness, tools) or a full voice pipeline. `exec` keeps pua's speech and turn-taking and needs no Swift; `stream` hands the whole call over. One process per call keeps per-call context in the agent and isolates calls. | `swift test` (exec protocol); offline runs below |
+| `stream` speaks Twilio Media Streams instead of a pua format | Voice-agent frameworks already accept that protocol for phone calls (Pipecat's `TwilioFrameSerializer`, for one), so bots built for Twilio take pua calls unchanged. The cost is 8 kHz μ-law, which is phone quality anyway. pua has no REST API, so closing the socket hangs up. | Offline run against a local server: shapes, mark timing, clear |
 | Relaunch Phone before restoring the mic | Phone had quit by the time the answered incoming call ended, so the restore failed and the mic stayed on PUA Call Mic. `restore` now launches Phone first, and a failure is reported as `route_restore_failed`. | Live incoming call 2026-11-16 (0.4.0) |
 | Incoming default persona converses | The first persona only took messages: on the live call it deflected a question, said "I can't pick up right now" as if it were the owner, and repeated one line three times. It now talks about anything, says it has no live data, and offers a message only when the caller wants the owner. | Live call, then the same caller turns replayed against the new prompt |
 | pua's call rules appended to every system prompt | Custom prompts keep working without knowing the `[hangup]` marker or the spoken style. The rule was tightened after the on-device model appended `[hangup]` to an ordinary reply in an offline run. | Offline conversation, 2026-11-16 |
@@ -68,6 +73,10 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 | 0.4.1 replay of the live caller turns against the new incoming prompt (text only, same on-device model) | Five different replies: no live weather, offers to chat, a fact about the city, `[hangup]` only after "bye" |
 | Second live incoming call with `pua listen --once --answer-after 3 --record` (2026-11-16, 0.4.1) | Rang 3 s, mic routed, answered (AX), 4 caller turns answered with varied replies (reply gap median 2.5 s, max 2.7 s); the agent said it cannot check live data and hung up after "thank you"; mic restored to *Use System Setting*. One invented fact ("no current stock listed"). With the 0.4.2 prompt, two text replays of the same turns answered "I don't know if geisha coffee is available"; one replay still re-greeted the caller by name and repeated the recording notice. |
 | Incoming banner captured with `pua ui-dump` while ringing | `FACETIME_NOTIFICATION` group: `AXGenericElement` description `<contact>, From Your iPhone` (inside bidi marks), buttons `Type to Reply`, `More`, `Decline`, `Answer`, then an avatar element with initials |
+| 0.5.0 offline: `swift test` (11 tests, including the exec protocol against `clock_agent.py`, unprompted `say`/`hangup`, μ-law round trip) | All pass |
+| 0.5.0 `pua converse --exec "python3 examples/agents/clock_agent.py"` against a scripted caller (no phone) | "What time is it right now?" → "It's 8:46 PM." (1.98 s); "Okay, thanks. Bye." → goodbye, `agent_hung_up`; the agent got `call_end` |
+| 0.5.0 `pua stream ws://127.0.0.1:…` against a local test server and a scripted caller | `connected`, `start` (μ-law 8 kHz); caller `media` at 50/s, 160 bytes each, speech present; `mark` after 1 s of audio came back at 1.04 s; `clear` returned the pending mark in 0.01 s; server close ended the session (`stream_closed`) and the recording was written |
+| 0.5.0 `pua stream` against `examples/agents/stream_echo.py` | Caller phrase at 0.4 s echoed back from 2.4 s; `mark` returned; `stop` sent at `--max-seconds` |
 | VoiceProcessingIO on `PUA Call Mic` while `audio-stream` plays the demo (no call) | Driver 0.1: −61 then −86 to −138 dBFS (cancelled). Driver 0.2: −13 to −34 dBFS for the whole clip. |
 
 ## Known gaps
@@ -79,14 +88,16 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
   element's description; 0.4.2 reads it (unit test on the captured shape), but `ringing` with a
   caller name has not been seen live yet. Answering while the Mac is locked is untested
   (probably not: Accessibility needs an unlocked session).
-* **No live data:** the on-device model cannot look things up (weather, news). Foundation Models
-  tool calling would be the place to add that, as a `ReplyModel` change.
+* **No live data in the built-in agent:** the on-device model cannot look things up (weather,
+  news). Attach an agent with tools through `--exec` instead.
+* **External agents on live calls:** `--exec` and `--stream` are verified offline only (a scripted
+  caller, a local server). Pipecat is untested; `--stream` does not send `dtmf`.
 * **Media process:** `avconferenced` confirmed live (`running_output`, `VCAudioIO`, VPIO aggregate).
 * **Per-call isolation:** the tap covers the whole `avconferenced` process (FaceTime audio would
   be included too).
-* **Turn-taking:** `converse` is half duplex. The caller cannot interrupt the agent (no
-  barge-in), and end of turn is a fixed silence window. `audio-stream` still leaves STT/TTS to
-  the agent.
+* **Turn-taking:** the built-in agent and `--exec` are half duplex. The caller cannot interrupt
+  the agent, and end of turn is a fixed silence window. `--stream` agents get `clear` for
+  interruptions and decide turn-taking themselves.
 * **Model depth:** the on-device model is fast but small. It misread "what is my name?" in the
   live demo, once invented a stock answer on an incoming call, and does not always follow the
   no-reintroduction rule. A larger model is a `ReplyModel` swap (see CONTRIBUTING.md).
