@@ -76,8 +76,9 @@ Without `system_prompt`, pua picks a prompt by direction:
 
 * **Outgoing** (`converse`): a friendly assistant that placed the call.
 * **Incoming** (`listen`): an assistant that answers the phone and talks with the caller about
-  anything, says plainly that it has no live information (weather, news), offers to take a
-  message for the owner, and never invents details about the owner or promises a callback.
+  anything, says plainly that it has no live information and cannot check stock, orders or
+  accounts, offers to take a message for the owner, and never invents details about the owner or
+  promises a callback.
 
 pua always appends its call rules to the system prompt, so a custom prompt does not need them:
 

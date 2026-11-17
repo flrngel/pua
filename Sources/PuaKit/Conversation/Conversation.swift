@@ -313,6 +313,8 @@ public final class Conversation: @unchecked Sendable {
         let hangup = s.localizedCaseInsensitiveContains(hangupMarker)
         s = s.replacingOccurrences(of: hangupMarker, with: "", options: .caseInsensitive)
         s = s.replacingOccurrences(of: "*", with: "").replacingOccurrences(of: "#", with: "")
+        // "Take care [hangup]." leaves a space before the period.
+        s = s.replacingOccurrences(of: "\\s+([.,!?])", with: "$1", options: .regularExpression)
         return (s.trimmingCharacters(in: .whitespacesAndNewlines), hangup)
     }
 

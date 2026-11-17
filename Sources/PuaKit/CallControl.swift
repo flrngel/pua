@@ -59,7 +59,8 @@ public enum CallControl {
                 if s.answer == nil, answerLabels.contains(label) { s.answer = el }
                 if s.decline == nil, declineLabels.contains(label) { s.decline = el }
                 if s.end == nil, endLabels.contains(label) { s.end = el }
-            } else if role == kAXStaticTextRole, !label.isEmpty {
+            } else if role == kAXStaticTextRole || role == "AXGenericElement", !label.isEmpty {
+                // The relay banner puts "<contact>, From Your iPhone" in a generic element's description.
                 let range = NSRange(label.startIndex..., in: label)
                 if s.timer == nil, timerPattern.firstMatch(in: label, range: range) != nil { s.timer = label }
                 else if s.texts.count < 12 { s.texts.append(label) }
@@ -69,10 +70,26 @@ public enum CallControl {
         return s
     }
 
-    /// Best-effort caller label: the first static text that is not a button label or a timer.
+    /// "<contact>, From Your iPhone" (ringing) or "<contact>, Using Your iPhone - 0:02" (active).
+    static let relaySuffix = try! NSRegularExpression(pattern: ",\\s*(?:From|Using) Your iPhone.*$")
+
+    /// Best-effort caller label: the contact or number from the relay banner, else the first text
+    /// that is not a button label or a timer.
     static func caller(from texts: [String]) -> String? {
         let ignored = answerLabels.union(declineLabels).union(endLabels)
-        return texts.first { !ignored.contains($0) && $0.count <= 64 }
+        // Labels wrap names in bidi isolation marks (U+202A…U+202E, U+2066…U+2069).
+        let cleaned = texts.map { text in
+            String(String.UnicodeScalarView(text.unicodeScalars.filter {
+                !(0x202A...0x202E).contains($0.value) && !(0x2066...0x2069).contains($0.value)
+            })).trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty && !ignored.contains($0) }
+        for text in cleaned {
+            let range = NSRange(text.startIndex..., in: text)
+            if let m = relaySuffix.firstMatch(in: text, range: range), let r = Range(m.range, in: text) {
+                return String(text[..<r.lowerBound])
+            }
+        }
+        return cleaned.first { $0.count <= 64 }
     }
 
     static func roots() -> [(String, AXUIElement)] {

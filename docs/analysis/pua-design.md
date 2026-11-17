@@ -66,6 +66,8 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 | 0.4.0 `pua listen --once`, then Ctrl-C | Engines prepared, `listening` emitted, clean exit with 0 calls |
 | Live incoming call with `pua listen --once --record` (2026-11-16, 0.4.0) | Ring seen on the Notification Center banner; mic routed 1.3 s later; Accept pressed; connected (AX) 1.6 s after that; greeting, 3 caller turns answered (reply gap median 3.3 s, max 3.5 s); the caller hung up; recording written. Two faults, fixed in 0.4.1: the persona (see Decisions) and the mic restore after Phone quit. |
 | 0.4.1 replay of the live caller turns against the new incoming prompt (text only, same on-device model) | Five different replies: no live weather, offers to chat, a fact about the city, `[hangup]` only after "bye" |
+| Second live incoming call with `pua listen --once --answer-after 3 --record` (2026-11-16, 0.4.1) | Rang 3 s, mic routed, answered (AX), 4 caller turns answered with varied replies (reply gap median 2.5 s, max 2.7 s); the agent said it cannot check live data and hung up after "thank you"; mic restored to *Use System Setting*. One invented fact ("no current stock listed"). With the 0.4.2 prompt, two text replays of the same turns answered "I don't know if geisha coffee is available"; one replay still re-greeted the caller by name and repeated the recording notice. |
+| Incoming banner captured with `pua ui-dump` while ringing | `FACETIME_NOTIFICATION` group: `AXGenericElement` description `<contact>, From Your iPhone` (inside bidi marks), buttons `Type to Reply`, `More`, `Decline`, `Answer`, then an avatar element with initials |
 | VoiceProcessingIO on `PUA Call Mic` while `audio-stream` plays the demo (no call) | Driver 0.1: −61 then −86 to −138 dBFS (cancelled). Driver 0.2: −13 to −34 dBFS for the whole clip. |
 
 ## Known gaps
@@ -73,10 +75,10 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 * **Call UI:** observed live for outgoing relay calls: the call lives in a Notification Center
   banner (`FACETIME_NOTIFICATION`) with `Mute`, `Keypad`, `More` and `End`, and the label
   `<contact>, Using Your iPhone - 0:02`. Incoming-call labels (`Accept`, `Answer`, `Decline`) have not been observed live yet.
-* **Answering:** verified live once (see above), with the Mac unlocked. The banner's caller label
-  was not read (`caller: null`), so `ringing` cannot name the caller yet; capture the incoming
-  banner with `pua ui-dump` on the next ringing call to fix the parser. Answering while the Mac
-  is locked is untested (probably not: Accessibility needs an unlocked session).
+* **Answering:** verified live twice, with the Mac unlocked. The caller label lives in a generic
+  element's description; 0.4.2 reads it (unit test on the captured shape), but `ringing` with a
+  caller name has not been seen live yet. Answering while the Mac is locked is untested
+  (probably not: Accessibility needs an unlocked session).
 * **No live data:** the on-device model cannot look things up (weather, news). Foundation Models
   tool calling would be the place to add that, as a `ReplyModel` change.
 * **Media process:** `avconferenced` confirmed live (`running_output`, `VCAudioIO`, VPIO aggregate).
@@ -86,4 +88,5 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
   barge-in), and end of turn is a fixed silence window. `audio-stream` still leaves STT/TTS to
   the agent.
 * **Model depth:** the on-device model is fast but small. It misread "what is my name?" in the
-  live demo.
+  live demo, once invented a stock answer on an incoming call, and does not always follow the
+  no-reintroduction rule. A larger model is a `ReplyModel` swap (see CONTRIBUTING.md).

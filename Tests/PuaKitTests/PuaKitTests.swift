@@ -69,4 +69,12 @@ import Testing
     let (text, hangup) = Conversation.clean("Bye now! [hangup]")
     #expect(text == "Bye now!")
     #expect(hangup)
+    #expect(Conversation.clean("Take care [hangup].").0 == "Take care.")
+}
+
+@Test func callerComesFromTheRelayBannerLabel() {
+    // Shape seen on a live incoming call: bidi marks around the name, the avatar initials after it.
+    #expect(CallControl.caller(from: ["\u{202A}Mina \u{2764}\u{202C}, From Your iPhone", "MK"]) == "Mina \u{2764}")
+    #expect(CallControl.caller(from: ["+1 555 0100, Using Your iPhone - 0:02"]) == "+1 555 0100")
+    #expect(CallControl.caller(from: ["Answer", "Mina"]) == "Mina")
 }

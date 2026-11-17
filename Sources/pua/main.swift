@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.4.1"
+let version = "0.4.2"
 
 let usage = """
 pua \(version): tunnel iPhone (Continuity) calls on a Mac to an agent
