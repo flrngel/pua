@@ -1,8 +1,8 @@
-# Put your agent on a phone call
+# Connect your agent
 
-pua handles the phone: dialing, answering, getting audio in and out of the call, switching the
-Phone app's microphone, recording, and the after-call hooks. Your agent plugs in at one of three
-levels:
+pua is phone-use for AI agents. It handles the phone: dialing, answering, getting audio in and
+out of the call, switching the Phone app's microphone, recording, and the after-call hooks.
+Your agent connects at one of three levels:
 
 | Your agent | Attach with | pua does | Your agent does |
 | --- | --- | --- | --- |
@@ -202,7 +202,7 @@ For full control, run pua as a child process:
   pua route setup     # route restore puts the microphone back
   ```
 
-The [README](../README.md#use) lists the flags and events.
+[cli.md](cli.md#raw-audio) lists the flags and events.
 
 ## Watching calls
 

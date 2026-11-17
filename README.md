@@ -1,52 +1,63 @@
+<div align="center">
+
 # pua
 
-Put your own agent on your iPhone's phone calls, from a Mac. pua handles the phone side:
-dialing, answering, hanging up, getting audio in and out of the call, recording, and hooks. Your
-agent does the talking, as a text agent over JSON lines, a voice agent over a
-Twilio-compatible WebSocket, or a program reading raw audio. A built-in on-device agent covers
-basic use. pua is built on Apple Continuity ("Calls on Other Devices") and the macOS Phone app.
-Nothing runs on the iPhone.
+### phone-use for AI agents
 
-How and why it works this way: [ANALYSIS.md](ANALYSIS.md) (the mechanism, with evidence) and
-[docs/analysis/pua-design.md](docs/analysis/pua-design.md) (design and verification).
+AI that answers, dials and talks on real phone calls,<br>
+through the iPhone you already have and your Mac.
+
+[Quickstart](#quickstart) · [Hear a call](#hear-a-call) · [Connect your agent](docs/integration.md) · [How it works](ANALYSIS.md)
+
+![macOS 26+](https://img.shields.io/badge/macOS-26%2B-111111?logo=apple)
+![Swift](https://img.shields.io/badge/Swift-native-F05138?logo=swift&logoColor=white)
+![On-device AI](https://img.shields.io/badge/AI-on--device-6E56CF)
+![No telephony provider](https://img.shields.io/badge/telephony%20provider-not%20needed-0A84FF)
+
+</div>
+
+---
+
+## What is phone-use?
+
+AI agents can already operate a computer (*computer-use*) and a web browser (*browser-use*).
+**phone-use** is the next step: an AI that can be on a phone call. It picks up when the phone
+rings, listens, answers in its own voice, and hangs up when the conversation is over. It can
+place calls, too. The *pu* in pua stands for phone-use.
+
+You don't need a phone company account, a calling service or a new number. pua works with your
+own iPhone, your own number, and your Mac.
+
+## How it works, in plain words
+
+When your iPhone rings, your Mac can ring too, and you can take the call on the Mac. Apple
+calls this *Continuity*. pua runs on the Mac and steps into that call:
 
 ```
-iPhone ─Continuity─▶ avconferenced ──process tap (muted)──▶ pua stdout  (PCM16 48k mono: caller)
-                      Phone.app mic ◀── PUA Call Mic ◀ PUA Call Feed ◀── pua stdin (PCM16 48k mono: you/agent)
+ the other person ──── your iPhone ── Wi-Fi ──▶ your Mac ──▶ pua ──▶ AI   (pua hears the caller)
+                                                 your Mac ◀── pua ◀── AI   (the caller hears the AI)
 ```
 
-## Attach your agent
+1. **It hears the caller.** pua takes the call's sound before it reaches your speakers and
+   hands it to the AI.
+2. **It speaks.** pua plays the AI's voice into the call in place of your microphone, so the
+   caller hears the AI.
+3. **It works the buttons.** pua presses Answer, Call and End for the AI, the way you would.
 
-| Your agent | Flag | It gets |
-| --- | --- | --- |
-| Text in, text out (an LLM harness, a tool-using agent) | `--exec CMD` | Each caller turn as text, one process per call. pua does speech recognition, voice and turn-taking. |
-| A voice agent (speech-to-speech, a bot built for Twilio) | `--stream URL` | The call as Twilio Media Streams messages: μ-law audio, `mark` and `clear` for interruptions |
-| Any program | `pua audio-stream` | PCM16 48 kHz on stdin and stdout, plus `pua call …` for control |
+Nothing is installed on the iPhone. When pua isn't running, your phone and Mac work the way they
+always have.
 
-```sh
-pua listen --answer-after 8 --exec "python3 examples/agents/clock_agent.py"   # answer incoming calls
-pua converse --dial "+1 555 0100" --exec "python3 my_agent.py"               # place a call
-pua stream ws://127.0.0.1:8765 --dial "+1 555 0100"                          # a voice agent on the call
-```
+## Hear a call
 
-[docs/integration.md](docs/integration.md) has both protocols, the example agents in
-[examples/agents](examples/agents), and notes for Pipecat. Without `--exec` or `--stream`, pua
-uses its built-in agent (below).
-
-## Demo: the built-in agent on a call
-
-A live call from the Mac to an iPhone, recorded with `pua converse --dial … --record`
-(2026-11-16, 87 s). Jessica hears the caller with Apple's on-device speech recognition, thinks
-with Apple's on-device Foundation Models, and speaks with ElevenLabs Flash v2.5.
+A real call placed by pua and recorded with it (87 seconds). The AI, "Jessica", ran on the Mac:
+Apple's on-device speech recognition and language model, with an ElevenLabs voice.
 
 <audio controls src="docs/demo/conversation.m4a"></audio>
 
 [▶ Listen to the recording (m4a, 87 s)](docs/demo/conversation.m4a)
 
-```
-caller ─▶ avconferenced ─tap─▶ SpeechTranscriber ─▶ Foundation Models ─▶ ElevenLabs TTS ─▶ PUA Call Feed ─▶ caller
-          (iPhone call)        (on-device)          (on-device)          (or macOS voice)
-```
+<details>
+<summary>Transcript</summary>
 
 | Time | Speaker | What was said (as recognized) |
 | --- | --- | --- |
@@ -64,118 +75,105 @@ caller ─▶ avconferenced ─tap─▶ SpeechTranscriber ─▶ Foundation Mod
 | 1:14 | Jessica (AI) | I totally get that—what kind of things do you usually think about during those quiet moments? |
 | 1:20 | Caller | _"I don't know."_ (hung up) |
 
-Measured in the recording, from the end of the caller's speech to Jessica's first audio:
-2.1 to 3.1 s, median 2.8 s. That gap is the 0.8 s end-of-turn wait, the on-device model's first
-sentence, and the first TTS audio. Replies are streamed sentence by sentence. The small on-device
-model is chatty but shallow: it took "what is my name?" as a question about itself.
+</details>
 
-## Requirements
+## What you can build
 
-- macOS 26 or later (Phone app), Apple Silicon or Intel. `converse` and `listen` also need Apple Intelligence
-  turned on (Apple Silicon); its English speech model downloads on first use.
-- An iPhone on the same Apple Account and Wi-Fi, with *Settings > Apps > Phone > Calls on Other
-  Devices > (this Mac)* enabled. FaceTime on the Mac must have the phone number enabled.
-- Xcode command line tools to build.
-
-## Setup
-
-```sh
-make                                                    # CLI + driver (ad-hoc signed)
-make driver SIGN_IDENTITY="Developer ID Application"    # recommended: sign the driver with your identity
-sudo scripts/install-driver.sh                          # installs PUA Call Mic + PUA Call Feed, restarts coreaudiod
-.build/release/pua permissions                          # Accessibility for this terminal
-.build/release/pua shortcut install                     # build, sign and import "PUA Dial" (AX presses Add Shortcut)
-.build/release/pua doctor                               # every prerequisite with its next action
-.build/release/pua selftest                             # proves both audio legs without a call
-```
-
-Permissions attach to the app that runs `pua` (your terminal or agent):
-
-| Permission | Why |
+| | |
 | --- | --- |
-| Accessibility | Call buttons and the Phone Audio menu |
-| System Audio Recording | Process tap |
-| Microphone | Only for `selftest`, which reads back the virtual mic |
+| **A receptionist** | It answers when you can't, says it is an AI, takes a message and sends it to you. |
+| **A caller** | Your agent dials a number, has the conversation and hands you the transcript. |
+| **A test line for voice bots** | Try your voice agent on a real phone call without setting up a calling service. |
 
-## Use
+## Quickstart
 
-```sh
-pua call dial "+1 555 123 4567"        # via the PUA Dial shortcut (first run: allow the Call action)
-pua call state --watch                 # idle | incoming | active, with caller and timer
-pua call answer --wait 30              # wait for a ringing call and accept it
-pua call hangup
+**You need:**
 
-# Duplex audio. --route sets the Phone microphone to PUA Call Mic and restores it on exit.
-pua audio-stream --route < agent-speech.pcm > caller.pcm
-```
+* **A Mac:** macOS 26 or later. The built-in AI needs Apple silicon with Apple Intelligence
+  turned on.
+* **An iPhone:** signed in to the same Apple Account and on the same Wi-Fi. On it, turn on
+  *Settings → Apps → Phone → Calls on Other Devices → (your Mac)*.
+* **Apple's free developer tools:** run `xcode-select --install` once.
 
-Example with macOS speech:
+**Install.** Paste this into Terminal:
 
 ```sh
-say -o /tmp/hi.aiff "Hello, this is an assistant calling for Alex."
-ffmpeg -loglevel error -i /tmp/hi.aiff -f s16le -ar 48000 -ac 1 - \
-  | pua audio-stream --route --stop-after-playback > caller.pcm
+git clone https://github.com/flrngel/pua && cd pua
+make                                  # build pua
+sudo scripts/install-driver.sh        # add pua's virtual microphone and speaker (asks for your password)
+.build/release/pua permissions        # then allow Terminal under Accessibility
+.build/release/pua shortcut install   # add the "PUA Dial" shortcut pua uses to place calls
+.build/release/pua doctor             # check everything; it tells you what is missing
 ```
 
-`audio-stream` events (stderr JSONL): `ready`, `route`, `stats` (every 5 s), `playback_eof`,
-`playback_drained`, `call_ended`, `route_restored`, `stopped`.
+macOS will ask for three permissions:
 
-Flags:
+* **Accessibility**, to press the call buttons.
+* **System Audio Recording**, to hear the call.
+* **Microphone**, for the self-test only.
 
-- `--monitor` keeps the caller audible on your speakers.
-- `--max-seconds N` bounds the session.
-- `--process` or `--pid` override the tapped process (default `com.apple.avconferenced`).
-- `--capture-only` and `--playback-only` run one direction.
-- `--no-call-guard` skips stopping when the call ends.
-
-Stopping `audio-stream` never hangs up the call.
-
-### Built-in agent
+**Let it answer a call.** Run this, then call your iPhone from another phone:
 
 ```sh
-# Outgoing: dial, talk, record. With ELEVENLABS_API_KEY set the agent uses ElevenLabs; otherwise the macOS voice.
-pua converse --dial "+1 555 123 4567" --record ./call
-pua converse --route --record ./call                    # on a call that is already connected
-
-# Incoming: answer every call that rings for 8 s, take a message, record it. Ctrl-C stops.
-pua listen --answer-after 8 --record ~/pua-calls
-pua listen --config examples/receptionist.json          # persona, prompt file, hook from a config file
-pua config show                                         # the settings in effect, and where they came from
+.build/release/pua listen --once
 ```
 
-Both are half duplex: the agent listens until the caller has been quiet for 0.8 s
-(`--end-silence`), replies, and ignores what is said while it speaks. It hangs up after the
-caller says goodbye (`--no-hangup` keeps the call up). `--record DIR` writes
-`conversation.wav` (stereo: left caller, right agent), `transcript.md`, `transcript.jsonl` and
-`call.json`.
+The Mac rings, pua picks up, and the AI greets the caller. Say "bye" and it hangs up.
 
-`listen` answers one call at a time. While a call rings it waits `--answer-after` seconds, so
-you can still pick up on the iPhone or the Mac, then points the Phone microphone at PUA Call Mic
-and presses Accept. The microphone goes back to normal after every call. `--once` or
-`--max-calls N` end it after N calls.
+**Let it place a call:**
 
-The system prompt, greeting, voice, engines, timing, recording folder and an after-call hook
-come from a JSON config file, with flags on top: see [docs/configuration.md](docs/configuration.md).
-Events go to stderr as JSON lines (`ringing`, `answered`, `heard`, `said`, `call_finished`, …).
+```sh
+.build/release/pua converse --dial "+1 555 0100"
+```
 
-## Safety
+## Connect your agent
 
-`pua` acts only on explicit commands. It answers calls only while `pua listen` runs, and records
-audio only with `--record` (or `record.directory`). Call audio goes only where you point it: an
-`--exec` agent gets text, a `--stream` server gets the audio. The default greetings tell the caller they are
-talking to an AI, and that the call is recorded when it is. Keep that disclosure when you change the greeting, and follow your
-local call-recording laws. Speech recognition and the language model run on the Mac. With
-ElevenLabs TTS, only the agent's reply text is sent to ElevenLabs.
+pua comes with a small, fast AI that runs on your Mac. For a smarter one, with its own tools,
+memory and knowledge, connect your agent in one of three ways:
 
-## Status
+| If your agent works with… | Use | pua takes care of |
+| --- | --- | --- |
+| **Text**: most chatbots and agent frameworks | `--exec "your program"` | Hearing the caller, speaking the reply, knowing whose turn it is |
+| **Voice**: speech-to-speech models, bots built for Twilio | `--stream ws://…` | Carrying the call's sound to your agent and back |
+| **Raw sound** | `pua audio-stream` | Only the sound |
 
-See [docs/analysis/pua-design.md](docs/analysis/pua-design.md) for what was verified on hardware
-and the known gaps. Uninstall the driver with `sudo scripts/uninstall-driver.sh`.
+```sh
+pua listen --exec "python3 examples/agents/clock_agent.py"
+```
 
-## Extending
+That example agent tells callers the time, which the built-in AI can't look up. On a live call
+it answered in about 1.5 seconds. The protocols, example agents and a note on Pipecat are in
+[docs/integration.md](docs/integration.md).
 
-Agents attach without Swift: see [docs/integration.md](docs/integration.md). Inside pua, speech
-recognition, the reply model and the voice are pluggable engines selected by name in the
-config. [CONTRIBUTING.md](CONTRIBUTING.md) maps the code, shows how to add an engine or a config
-key, and lists the checks that need no phone (`swift test`, `pua selftest`, an offline
-conversation).
+## Private by default
+
+* **On your Mac:** the built-in AI's speech recognition and language model run on the Mac. The
+  conversation does not leave it.
+* **Only when you ask:** pua answers calls only while `pua listen` is running, and records only
+  when you ask it to (`--record`).
+* **Honest with callers:** the AI tells callers it is an AI, and that the call is recorded when
+  it is. Keep that if you change the greeting, and follow your local recording laws.
+* **You choose what is shared:** with the ElevenLabs voice, only the AI's reply text goes to
+  ElevenLabs. A connected agent gets only what you send it.
+
+## Limits today
+
+* **One call at a time,** with the Mac awake and unlocked.
+* **Taking turns:** with the built-in AI or `--exec`, the caller can't interrupt the AI
+  mid-sentence. `--stream` agents can handle interruptions.
+* **The built-in AI is small.** It is quick, but it can't look things up. Connect a stronger agent
+  for that.
+* **Language:** tested on a Mac set to English.
+
+## Docs
+
+| | |
+| --- | --- |
+| [Connect your agent](docs/integration.md) | The `--exec` and `--stream` protocols, with example agents |
+| [Settings](docs/configuration.md) | Persona, greeting, voice, recording and after-call actions in one file |
+| [Commands](docs/cli.md) | Every command and flag |
+| [How Mac and iPhone calling works](ANALYSIS.md) | The mechanism, with evidence |
+| [Design and verification](docs/analysis/pua-design.md) | Decisions, what was tested on real calls, known gaps |
+| [Contributing](CONTRIBUTING.md) | Code map, adding engines, checks that need no phone |
+
+Uninstall: `sudo scripts/uninstall-driver.sh`.

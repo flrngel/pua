@@ -1,7 +1,8 @@
 # Contributing to pua
 
-This is the map for changing or extending pua: where things live, which parts are designed to
-be swapped, the contracts to keep stable, and how to check a change without a phone.
+pua is phone-use for AI agents. This is the map for changing or extending it: where things
+live, which parts are designed to be swapped, the contracts to keep stable, and how to check a
+change without a phone.
 
 How the call path works, with evidence, is in [ANALYSIS.md](ANALYSIS.md) and
 [docs/analysis/pua-design.md](docs/analysis/pua-design.md). User settings are in
@@ -115,7 +116,7 @@ the old form.
 
 ## Extend without Swift
 
-* **Your own agent.** `--exec CMD` (text in, text out) or `--stream URL` (a voice agent speaking
+* **Agents.** `--exec CMD` (text in, text out) or `--stream URL` (a voice agent speaking
   Twilio Media Streams). See [docs/integration.md](docs/integration.md).
 * **Hooks.** `hooks.call_ended` gets every call's summary and transcript as JSON on stdin.
   Summaries, message delivery and logging can live there. See

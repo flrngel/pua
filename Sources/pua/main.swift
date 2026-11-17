@@ -3,10 +3,10 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.5.0"
+let version = "0.5.1"
 
 let usage = """
-pua \(version): put an agent on iPhone calls from a Mac (integration guide: docs/integration.md)
+pua \(version): phone-use for AI agents (iPhone calls on a Mac; agents: docs/integration.md)
 
 Setup and status
   pua doctor                      prerequisites, each with its next action (JSON)

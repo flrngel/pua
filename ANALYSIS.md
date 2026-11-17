@@ -1,5 +1,7 @@
 # ANALYSIS: How iPhone calls can be tunneled through a Mac
 
+The mechanism behind pua, phone-use for AI agents.
+
 Analysis date: 2026-11-16. Analysis host: macOS 27.0.1 (arm64), Xcode 27.2.
 
 Evidence comes from Apple documentation, public community and scholarly sources, experiments on
