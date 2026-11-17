@@ -30,6 +30,8 @@ How the call path works, with evidence, is in [ANALYSIS.md](ANALYSIS.md) and
 | `Sources/PuaKit/ProcessTap.swift`, `DeviceFeed.swift` | Hearing the caller (process tap) and speaking into the call (PUA Call Feed) |
 | `Sources/PuaKit/AudioStream.swift` | `audio-stream`: raw PCM in and out for external agents |
 | `Driver/PuaCallMic.c` | The HAL driver: `PUA Call Mic` (input) and `PUA Call Feed` (output) on one ring |
+| `skills/phone-use/SKILL.md` | The phone-use skill for agent harnesses (canonical copy) |
+| `Sources/PuaKit/Skill.swift`, `SkillText.swift` | `pua skill install`; `SkillText.swift` is generated from SKILL.md by `scripts/embed-skill.sh` |
 | `Tests/PuaKitTests` | Offline tests (`swift test`) |
 | `examples/` | A config, a prompt file, a hook script, and example agents for `--exec` and `--stream` |
 
@@ -138,6 +140,7 @@ the old form.
 | The `[hangup]` marker and the call rules | `Conversation.callRules` |
 | The `exec` agent protocol (message types and fields) | `ExecModel.swift`, docs/integration.md |
 | The stream message set, μ-law 8 kHz, mark and clear semantics | `MediaStream.swift`, docs/integration.md |
+| Commands, flags, JSON fields and error codes the phone-use skill relies on | `skills/phone-use/SKILL.md` |
 
 ## Check a change
 
@@ -146,6 +149,7 @@ Start with the cheapest check that covers your change.
 | Change | Check |
 | --- | --- |
 | Config, prompts, splitting | `swift test` |
+| The phone-use skill | Edit `skills/phone-use/SKILL.md`, run `make` (or `scripts/embed-skill.sh`), then `swift test` |
 | Audio path or driver | `pua selftest` (no call needed) |
 | A conversation engine, or the `exec` protocol | `swift test`, then the offline conversation below with `--exec` |
 | The stream bridge | The offline conversation below with `pua stream` and `examples/agents/stream_echo.py` |

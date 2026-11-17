@@ -204,6 +204,28 @@ For full control, run pua as a child process:
 
 [cli.md](cli.md#raw-audio) lists the flags and events.
 
+## Agent harnesses: the phone-use skill
+
+Agents like Claude Code and Codex are too slow to answer a caller turn by turn, but they are
+good at planning a call and reporting on it. The phone-use skill
+([skills/phone-use/SKILL.md](../skills/phone-use/SKILL.md)) gives them that job:
+
+* **Brief:** agree on the number and goal with the user, write the instructions and greeting.
+* **Run:** `pua converse --dial …`, while pua's fast voice agent has the conversation.
+* **Report:** read the outcome from the summary's transcript.
+
+The skill also covers call state, hanging up, answering with `pua listen`, safety rules and
+error codes.
+
+```sh
+pua skill install                 # ~/.claude/skills and ~/.agents/skills, with this pua's path
+pua skill install --dir DIR       # any other skills folder
+pua skill uninstall               # removes only copies pua installed
+```
+
+For a smarter agent *during* the call, combine the two: the harness briefs and reports, and an
+`--exec` agent with tools answers each turn.
+
 ## Watching calls
 
 Whichever agent you attach:

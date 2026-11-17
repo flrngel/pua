@@ -7,7 +7,7 @@
 AI that answers, dials and talks on real phone calls,<br>
 through the iPhone you already have and your Mac.
 
-[Quickstart](#quickstart) · [Hear a call](#hear-a-call) · [Connect your agent](docs/integration.md) · [How it works](ANALYSIS.md)
+[Quickstart](#quickstart) · [Hear a call](#hear-a-call) · [Use it from Claude Code or Codex](#use-it-from-claude-code-codex-and-other-agents) · [Connect your agent](docs/integration.md) · [How it works](ANALYSIS.md)
 
 ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-111111?logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-native-F05138?logo=swift&logoColor=white)
@@ -104,6 +104,7 @@ sudo scripts/install-driver.sh        # add pua's virtual microphone and speaker
 .build/release/pua permissions        # then allow Terminal under Accessibility
 .build/release/pua shortcut install   # add the "PUA Dial" shortcut pua uses to place calls
 .build/release/pua doctor             # check everything; it tells you what is missing
+.build/release/pua skill install      # optional: teach Claude Code, Codex and other agents phone-use
 ```
 
 macOS will ask for three permissions:
@@ -125,6 +126,38 @@ The Mac rings, pua picks up, and the AI greets the caller. Say "bye" and it hang
 ```sh
 .build/release/pua converse --dial "+1 555 0100"
 ```
+
+## Use it from Claude Code, Codex and other agents
+
+AI coding agents learn new abilities from *skills*: short instruction files they read when a
+task calls for one. pua ships a **phone-use** skill. Install it with one command:
+
+```sh
+.build/release/pua skill install
+```
+
+Then start a new session in your agent and ask in plain words:
+
+> Call +1 555 0100 and ask whether they're open this Sunday.
+
+The agent works like an assistant you hand a phone task to:
+
+1. **It checks with you.** It repeats the number and the goal, and waits for your OK.
+2. **It briefs the caller.** It writes the voice agent's instructions and its greeting, which
+   always says it's an AI.
+3. **It places the call.** pua dials, and its voice agent has the conversation.
+4. **It reports back.** You get the outcome, with the lines from the transcript that show it.
+
+You can also ask it to check or end the current call, or to answer your calls and take a
+message. It only answers calls when you ask.
+
+| | |
+| --- | --- |
+| Where it installs | `~/.claude/skills/phone-use` (Claude Code), and `~/.agents/skills/phone-use`, the shared folder that Codex, Gemini CLI and other agents read |
+| Another folder | `pua skill install --dir ~/.codex/skills` (older Codex), or a project's `.claude/skills` |
+| Update | Run `pua skill install` again after updating pua |
+| Remove | `pua skill uninstall` |
+| Read it | [skills/phone-use/SKILL.md](skills/phone-use/SKILL.md) |
 
 ## Connect your agent
 
@@ -170,6 +203,7 @@ it answered in about 1.5 seconds. The protocols, example agents and a note on Pi
 | | |
 | --- | --- |
 | [Connect your agent](docs/integration.md) | The `--exec` and `--stream` protocols, with example agents |
+| [phone-use skill](skills/phone-use/SKILL.md) | What Claude Code, Codex and other agents learn from `pua skill install` |
 | [Settings](docs/configuration.md) | Persona, greeting, voice, recording and after-call actions in one file |
 | [Commands](docs/cli.md) | Every command and flag |
 | [How Mac and iPhone calling works](ANALYSIS.md) | The mechanism, with evidence |

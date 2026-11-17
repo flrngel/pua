@@ -33,6 +33,17 @@ Requirements in detail:
 
 Uninstall the driver with `sudo scripts/uninstall-driver.sh`.
 
+## Skill for agent harnesses
+
+```sh
+pua skill install [--dir DIR]     # copy the phone-use skill into ~/.claude/skills and ~/.agents/skills (or DIR)
+pua skill uninstall [--dir DIR]   # remove copies that pua installed
+pua skill show                    # print the skill
+```
+
+The installed copy ends with this pua's path and version. Run `pua skill install` again after
+moving or updating pua.
+
 ## Calls
 
 ```sh
