@@ -19,5 +19,6 @@ let package = Package(
             ]
         ),
         .executableTarget(name: "pua", dependencies: ["PuaKit"]),
+        .testTarget(name: "PuaKitTests", dependencies: ["PuaKit"]),
     ]
 )
