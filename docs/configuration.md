@@ -75,15 +75,17 @@ Secrets never go in the config file. The ElevenLabs key is read from `ELEVENLABS
 Without `system_prompt`, pua picks a prompt by direction:
 
 * **Outgoing** (`converse`): a friendly assistant that placed the call.
-* **Incoming** (`listen`): an assistant answering for the phone's owner, who finds out who is
-  calling and why, offers to take a message, and never invents details about the owner.
+* **Incoming** (`listen`): an assistant that answers the phone and talks with the caller about
+  anything, says plainly that it has no live information (weather, news), offers to take a
+  message for the owner, and never invents details about the owner or promises a callback.
 
 pua always appends its call rules to the system prompt, so a custom prompt does not need them:
 
 > Your replies are spoken aloud on a phone call. Speak naturally, like a person on the phone:
-> one or two short sentences per reply, no lists, no markdown, no emoji. Only when the caller
-> says goodbye or asks to end the call, reply with a short goodbye and put [hangup] at the very
-> end. Never write [hangup] in any other reply.
+> one or two short sentences per reply, no lists, no markdown, no emoji. Do not greet or introduce
+> yourself again, and never repeat an earlier reply: if the caller is confused, say it differently.
+> Only when the caller says goodbye or asks to end the call, reply with a short goodbye and put
+> [hangup] at the very end. Never write [hangup] in any other reply.
 
 The default greetings say that the caller is talking to an AI, and add "This call is being
 recorded." when recording is on. A custom greeting replaces that text: keep both disclosures in

@@ -105,7 +105,7 @@ public final class Listener: @unchecked Sendable {
             events.emit("listen_error", ["stage": "route", "error": "\(error)"])
             return nil
         }
-        defer { events.emit("route_restored", (try? PhoneRoute.restore()) ?? [:]) }
+        defer { PhoneRoute.restoreAndReport() }
 
         if let gone = stillRinging() { events.emit(gone, ["caller": caller]); return nil }
         let watch = ConnectionWatch()

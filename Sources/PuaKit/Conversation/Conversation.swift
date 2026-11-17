@@ -21,7 +21,8 @@ public final class Conversation: @unchecked Sendable {
     /// Appended to every system prompt, so custom prompts need not know pua's conventions.
     public static let callRules = """
     Your replies are spoken aloud on a phone call. Speak naturally, like a person on the phone: \
-    one or two short sentences per reply, no lists, no markdown, no emoji. \
+    one or two short sentences per reply, no lists, no markdown, no emoji. Do not greet or introduce \
+    yourself again, and never repeat an earlier reply: if the caller is confused, say it differently. \
     Only when the caller says goodbye or asks to end the call, reply with a short goodbye and put \
     \(hangupMarker) at the very end. Never write \(hangupMarker) in any other reply.
     """

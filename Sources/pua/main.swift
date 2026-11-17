@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.4.0"
+let version = "0.4.1"
 
 let usage = """
 pua \(version): tunnel iPhone (Continuity) calls on a Mac to an agent
@@ -275,7 +275,7 @@ do {
         let current = Current()
         let summary = try runAsync(interrupt: {
             if let c = current.conversation { c.stop("interrupted") } else {
-                if route { _ = try? PhoneRoute.restore() }
+                if route { PhoneRoute.restoreAndReport() }
                 exit(130)
             }
         }) {
@@ -283,7 +283,7 @@ do {
             let engines = try Engines.make(settings)
             try await engines.prepare()
             if route { Events.shared.emit("route", try PhoneRoute.setup(micName: "PUA Call Mic")) }
-            defer { if route { Events.shared.emit("route_restored", (try? PhoneRoute.restore()) ?? [:]) } }
+            defer { if route { PhoneRoute.restoreAndReport() } }
             if let number = dial {
                 let ready = DispatchSemaphore(value: 0)
                 let done = DispatchSemaphore(value: 0)

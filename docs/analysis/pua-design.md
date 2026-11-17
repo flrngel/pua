@@ -37,7 +37,9 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 | Dial through a Shortcut, with `tel:` as a fallback | `tel:` needs a confirmation click. The Shortcut Call action does not, after the first approval. | external M4; live dial 2026-11-16 |
 | Plain PCM16 on stdin and stdout, JSONL on stderr | Existing STT/TTS pipes (whisper.cpp, `say`, cloud TTS) plug in unchanged. | README examples |
 | Engines behind protocols with a name registry | STT, model and voice change faster than the call path. A new engine is one file and one table entry; the config selects it. Turn-taking stays in one place, so every engine gets the same timing behaviour. | `swift test`; offline conversation with the refactored engines |
-| Route the mic per incoming call, while it rings | Leaving the Phone mic on PUA Call Mic between calls would silence the owner on calls they answer themselves. Ring time covers the route switch and engine setup, so the greeting starts right after Accept. | Design; not yet observed live |
+| Route the mic per incoming call, while it rings | Leaving the Phone mic on PUA Call Mic between calls would silence the owner on calls they answer themselves. Ring time covers the route switch and engine setup, so the greeting starts right after Accept. | Live incoming call 2026-11-16: the banner stayed up while Phone was brought forward; Accept 1.4 s after the ring |
+| Relaunch Phone before restoring the mic | Phone had quit by the time the answered incoming call ended, so the restore failed and the mic stayed on PUA Call Mic. `restore` now launches Phone first, and a failure is reported as `route_restore_failed`. | Live incoming call 2026-11-16 (0.4.0) |
+| Incoming default persona converses | The first persona only took messages: on the live call it deflected a question, said "I can't pick up right now" as if it were the owner, and repeated one line three times. It now talks about anything, says it has no live data, and offers a message only when the caller wants the owner. | Live call, then the same caller turns replayed against the new prompt |
 | pua's call rules appended to every system prompt | Custom prompts keep working without knowing the `[hangup]` marker or the spoken style. The rule was tightened after the on-device model appended `[hangup]` to an ordinary reply in an offline run. | Offline conversation, 2026-11-16 |
 | CLI-only, with TCC on the host terminal | Smallest build. Accessibility, System Audio Recording and Microphone permissions attach to the terminal or agent app that runs `pua`. | A separate signed .app would keep the grants stable across terminals; possible follow-up. |
 
@@ -62,6 +64,8 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 | Live AI conversation with `pua converse --dial … --record` (2026-11-16, 0.3.0) | 87 s, 6 agent turns, 5 caller turns answered; caller hung up. Reply gap in the recording 2.1–3.1 s (median 2.8 s). One immediate reply missed (fixed in 0.3.1, verified offline with an overlapping caller). Recording in `docs/demo/`. |
 | 0.4.0 offline: `swift test` (7 tests); `pua converse` against a scripted caller with the engine registry | All pass. Two runs: the caller's question answered (reply gap 3.0 s), hang-up only after "Goodbye." |
 | 0.4.0 `pua listen --once`, then Ctrl-C | Engines prepared, `listening` emitted, clean exit with 0 calls |
+| Live incoming call with `pua listen --once --record` (2026-11-16, 0.4.0) | Ring seen on the Notification Center banner; mic routed 1.3 s later; Accept pressed; connected (AX) 1.6 s after that; greeting, 3 caller turns answered (reply gap median 3.3 s, max 3.5 s); the caller hung up; recording written. Two faults, fixed in 0.4.1: the persona (see Decisions) and the mic restore after Phone quit. |
+| 0.4.1 replay of the live caller turns against the new incoming prompt (text only, same on-device model) | Five different replies: no live weather, offers to chat, a fact about the city, `[hangup]` only after "bye" |
 | VoiceProcessingIO on `PUA Call Mic` while `audio-stream` plays the demo (no call) | Driver 0.1: −61 then −86 to −138 dBFS (cancelled). Driver 0.2: −13 to −34 dBFS for the whole clip. |
 
 ## Known gaps
@@ -69,10 +73,12 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 * **Call UI:** observed live for outgoing relay calls: the call lives in a Notification Center
   banner (`FACETIME_NOTIFICATION`) with `Mute`, `Keypad`, `More` and `End`, and the label
   `<contact>, Using Your iPhone - 0:02`. Incoming-call labels (`Accept`, `Answer`, `Decline`) have not been observed live yet.
-* **Answering:** `pua listen` has not answered a live call yet. Open questions: the incoming
-  banner's button labels, whether switching the Phone mic while the call rings keeps the banner,
-  and whether answering works while the Mac is locked (probably not: Accessibility needs an
-  unlocked session).
+* **Answering:** verified live once (see above), with the Mac unlocked. The banner's caller label
+  was not read (`caller: null`), so `ringing` cannot name the caller yet; capture the incoming
+  banner with `pua ui-dump` on the next ringing call to fix the parser. Answering while the Mac
+  is locked is untested (probably not: Accessibility needs an unlocked session).
+* **No live data:** the on-device model cannot look things up (weather, news). Foundation Models
+  tool calling would be the place to add that, as a `ReplyModel` change.
 * **Media process:** `avconferenced` confirmed live (`running_output`, `VCAudioIO`, VPIO aggregate).
 * **Per-call isolation:** the tap covers the whole `avconferenced` process (FaceTime audio would
   be included too).

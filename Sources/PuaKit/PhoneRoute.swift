@@ -149,18 +149,27 @@ public enum PhoneRoute {
         return try status()
     }
 
-    /// Restores the journaled selections and removes the journal.
+    /// Restores the journaled selections and removes the journal. Launches Phone first: it can
+    /// quit on its own when a call ends (live: gone right after an answered incoming call).
     public static func restore() throws -> [String: Any] {
         guard let data = try? Data(contentsOf: journalURL),
               let journal = try JSONSerialization.jsonObject(with: data) as? [String: String] else {
             return ["restored": false, "reason": "no_journal"]
         }
+        try ensureReady()
         if let mic = journal["microphone"] { try select(.microphone, mic) }
         if let out = journal["output"] { try select(.output, out) }
         try? FileManager.default.removeItem(at: journalURL)
         var s = try status()
         s["restored"] = true
         return s
+    }
+
+    /// Restores and reports `route_restored` or `route_restore_failed` on stderr.
+    public static func restoreAndReport() {
+        do { Events.shared.emit("route_restored", try restore()) } catch {
+            Events.shared.emit("route_restore_failed", ["error": "\(error)", "next": "pua route restore"])
+        }
     }
 
     public static func status() throws -> [String: Any] {
