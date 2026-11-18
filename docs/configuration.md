@@ -52,12 +52,12 @@ Relative paths start at the folder of the config file; `~` expands to your home 
 | `agent.system_prompt_file` | path | | `--instructions-file` | Reads the system prompt from a text file. `system_prompt` wins if both are set. |
 | `agent.greeting` | string | built-in, per direction | `--greeting`, `--no-greeting` | First line the agent says. `""` for none. |
 | `agent.locale` | string | `en-US` | `--locale` | Speech recognition and macOS voice language. |
-| `engines.stt` | name | `apple` | `--stt` | Speech recognition engine. |
+| `engines.stt` | name | `apple` | `--stt` | Speech recognition: `apple` (on the Mac) or `elevenlabs` (Scribe v3 Live with turn prediction: faster replies, but the caller's audio goes to ElevenLabs; needs `ELEVENLABS_API_KEY`). |
 | `engines.llm` | name | `apple` | `--llm` | Reply model. |
 | `engines.tts` | name | `elevenlabs` if `ELEVENLABS_API_KEY` is set, else `system` | `--tts` | Voice. |
 | `voice.id` | string | engine default | `--voice` | ElevenLabs voice ID, or a macOS voice identifier for `system`. |
 | `voice.model` | string | `eleven_flash_v2_5` | `--tts-model` | ElevenLabs model. |
-| `conversation.end_of_turn_silence` | seconds | `0.8` | `--end-silence` | Caller silence that ends their turn (1.3 s while a phrase is unfinished). |
+| `conversation.end_of_turn_silence` | seconds | `0.8` | `--end-silence` | Caller silence that ends their turn (1.3 s while a phrase is unfinished). With `engines.stt: "elevenlabs"`, the recognizer ends the turn as soon as it predicts the caller is done, and this is the silence (at least 1.3 s) after which it ends the turn anyway. |
 | `conversation.max_seconds` | seconds | `300` | `--max-seconds` | Longest conversation per call. |
 | `conversation.hang_up_when_done` | bool | `true` | `--no-hangup` | Hang up after the agent says goodbye. |
 | `listen.answer_after` | seconds | `0` | `--answer-after` | Ring time before pua answers, so you can still pick up. Keep it below your carrier's voicemail timeout (often 20–30 s). |
@@ -142,3 +142,4 @@ pua. [examples/hooks/notify.sh](../examples/hooks/notify.sh) shows a macOS notif
 | `agent_log`, `agent_exited` | An `exec` agent's `log` message or stderr line; the agent exited before the call ended |
 | `stream_ready`, `stream_clear`, `stream_closed` | The stream bridge is up (`stream_sid`, `call_sid`); the agent cleared queued audio; the agent closed the socket |
 | `stt_error`, `llm_error`, `tts_error`, `listen_error` | A failure; the conversation goes on where it can |
+| `stt_reconnected` | The `elevenlabs` recognizer reconnected after losing its connection |

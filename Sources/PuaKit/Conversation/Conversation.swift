@@ -47,6 +47,7 @@ public final class Conversation: CallSession, @unchecked Sendable {
     private var consumedUntil: Double = 0
     private var finals: [String] = []
     private var volatileText = ""
+    private var turnCommitted = false          // the recognizer marked the end of the caller's turn
     private var agentSpeaking = false
     private var callerTrack: [Int16] = []
     private var agentTrack: [Int16] = []
@@ -69,6 +70,7 @@ public final class Conversation: CallSession, @unchecked Sendable {
     }
 
     private var isStopped: Bool { locked { stopReason != nil } }
+    private var predictsTurns: Bool { engines.recognizer.predictsTurns }
 
     @discardableResult
     private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
@@ -162,13 +164,25 @@ public final class Conversation: CallSession, @unchecked Sendable {
             if !says.isEmpty { continue }
             let (text, heardAt, endOfTurn, startedAt) = locked { () -> (String, Date, Bool, Double?) in
                 let text = (finals + [volatileText]).joined(separator: " ").trimmingCharacters(in: .whitespaces)
-                // A trailing unfinalized phrase without end punctuation ("I just want to, um")
-                // usually means the caller is still thinking: give them a little longer.
-                let open = !volatileText.isEmpty && !".?!".contains(volatileText.last ?? ".")
-                let silence = open ? max(settings.endOfTurnSilence, 1.3) : settings.endOfTurnSilence
-                let end = !text.isEmpty && Date().timeIntervalSince(lastVoice) >= silence
+                let quiet = Date().timeIntervalSince(lastVoice)
+                let end: Bool
+                if predictsTurns {
+                    // The recognizer says when the turn is over, unless the caller has already
+                    // gone on talking. Silence is only a backstop, for a lost connection.
+                    end = !text.isEmpty && ((turnCommitted && volatileText.isEmpty)
+                                            || quiet >= max(settings.endOfTurnSilence, 1.3) + 1.5)
+                } else {
+                    // A trailing unfinalized phrase without end punctuation ("I just want to, um")
+                    // usually means the caller is still thinking: give them a little longer.
+                    let open = !volatileText.isEmpty && !".?!".contains(volatileText.last ?? ".")
+                    let silence = open ? max(settings.endOfTurnSilence, 1.3) : settings.endOfTurnSilence
+                    end = !text.isEmpty && quiet >= silence
+                }
                 let start = turnStart
-                if end { consumedUntil = fedSeconds; finals = []; volatileText = ""; turnStart = nil; soundOnset = nil }
+                if end {
+                    consumedUntil = fedSeconds; finals = []; volatileText = ""; turnStart = nil; soundOnset = nil
+                    turnCommitted = false
+                }
                 return (text, lastSound == .distantPast ? lastVoice : lastSound, end, start)
             }
             guard endOfTurn else { continue }
@@ -255,6 +269,7 @@ public final class Conversation: CallSession, @unchecked Sendable {
         if r.isFinal {
             if !r.text.isEmpty { finals.append(r.text) }
             volatileText = ""
+            if r.endOfTurn { turnCommitted = true }
         } else {
             volatileText = r.text
         }
@@ -340,6 +355,7 @@ public final class Conversation: CallSession, @unchecked Sendable {
             consumedUntil = fedSeconds
             finals = []
             volatileText = ""
+            turnCommitted = false
             lastVoice = .distantPast
             lastSound = .distantPast
             soundOnset = nil  // a phrase begun while the agent spoke has no onset of its own

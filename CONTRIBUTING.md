@@ -16,6 +16,7 @@ How the call path works, with evidence, is in [ANALYSIS.md](ANALYSIS.md) and
 | `Sources/PuaKit/Config.swift` | Config file (`PuaConfig`), lookup (`LoadedConfig`), resolved `ConversationSettings`, default prompts and greetings |
 | `Sources/PuaKit/Conversation/Engines.swift` | **Extension points**: `SpeechRecognizer`, `ReplyModel`, `Voice` and the name registry |
 | `Sources/PuaKit/Conversation/AppleEngines.swift` | `apple` STT (SpeechTranscriber) and `apple` LLM (Foundation Models) |
+| `Sources/PuaKit/Conversation/ElevenLabsSTT.swift` | `elevenlabs` STT: Scribe v3 Live over WebSocket, turn prediction (`predictsTurns`) |
 | `Sources/PuaKit/Conversation/Voices.swift` | `system` (macOS voice) and `elevenlabs` TTS |
 | `Sources/PuaKit/CallSession.swift` | `CallSession`: what runs on a connected call (pua's `Conversation` or a `MediaStreamBridge`), and the per-call factories |
 | `Sources/PuaKit/Conversation/ExecModel.swift` | `exec` LLM: your agent process, JSON lines (docs/integration.md) |
@@ -97,7 +98,7 @@ The contracts, which `Conversation` relies on:
 
 | Protocol | Must |
 | --- | --- |
-| `SpeechRecognizer` | Accept 48 kHz mono Float32 in `append` from the audio thread and return quickly. Report `end` in seconds of appended audio. Send partial results for a phrase, then one final result. End `results` on `finish()`, which may be called more than once. |
+| `SpeechRecognizer` | Accept 48 kHz mono Float32 in `append` from the audio thread and return quickly. Report `end` in seconds of appended audio. Send partial results for a phrase, then one final result. End `results` on `finish()`, which may be called more than once. If it knows when the caller is done, set `predictsTurns` and mark that final result `endOfTurn`: pua then answers right away instead of waiting for silence. |
 | `ReplyModel` | Keep the context for one call (a new instance is made per call). Use `settings.instructions`, which already contains pua's call rules. Yield text in order; pua finds the sentences. Throw on failure: pua says a short fallback line. |
 | `Voice` | Write 48 kHz mono Float32 to `SpeechOutput` while synthesizing, so the first audio goes out before the sentence is finished. Throw on failure: pua repeats the sentence with the macOS voice. |
 

@@ -70,6 +70,9 @@ pua config show                                         # the settings in effect
 * **Turn-taking:** both commands are half duplex. The agent listens until the caller has been
   quiet for 0.8 s (`--end-silence`), replies, and ignores what is said while it speaks. It hangs
   up after the caller says goodbye (`--no-hangup` keeps the call up).
+* **Faster replies:** `--stt elevenlabs` uses ElevenLabs Scribe v3 Live, which predicts when the
+  caller has finished instead of waiting out a fixed silence (offline test: reply gap 0.96 s
+  instead of 2.23 s). The caller's audio then goes to ElevenLabs; it needs `ELEVENLABS_API_KEY`.
 * **Recording:** `--record DIR` writes `conversation.wav` (stereo: left caller, right agent),
   `transcript.md`, `transcript.jsonl` and `call.json`.
 * **How `listen` answers:** one call at a time. While a call rings, it waits `--answer-after`

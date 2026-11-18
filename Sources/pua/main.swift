@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import PuaKit
 
-let version = "0.6.0"
+let version = "0.7.0"
 
 let usage = """
 pua \(version): phone-use for AI agents (iPhone calls on a Mac; agents: docs/integration.md)

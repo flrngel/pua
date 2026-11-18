@@ -4,19 +4,23 @@ import Foundation
 // implementation by name (`engines.stt`, `engines.llm`, `engines.tts`).
 //
 // To add an engine: implement the protocol in a new file in this folder, then add one line to
-// the matching table in `Engines`. Nothing else in pua needs to change. See docs/extending.md.
+// the matching table in `Engines`. Nothing else in pua needs to change. See CONTRIBUTING.md.
 
 /// Text recognized from the caller. `end` is where the phrase ends, in seconds of caller audio
-/// since the conversation started (the clock of the samples passed to `append`).
+/// since the conversation started (the clock of the samples passed to `append`). `endOfTurn`
+/// marks a final result after which the caller is done talking, from recognizers that predict
+/// turns (`predictsTurns`).
 public struct RecognizedSpeech: Sendable {
     public var text: String
     public var isFinal: Bool
     public var end: Double
+    public var endOfTurn: Bool
 
-    public init(text: String, isFinal: Bool, end: Double) {
+    public init(text: String, isFinal: Bool, end: Double, endOfTurn: Bool = false) {
         self.text = text
         self.isFinal = isFinal
         self.end = end
+        self.endOfTurn = endOfTurn
     }
 }
 
@@ -30,6 +34,9 @@ public protocol SpeechRecognizer: AnyObject {
     func append(_ samples: UnsafeBufferPointer<Float>)
     /// Partial and final results. Partial results for a phrase replace each other until a final one.
     var results: AsyncStream<RecognizedSpeech> { get }
+    /// True when final results carry `endOfTurn`. pua then answers on that mark instead of
+    /// waiting for `end_of_turn_silence`.
+    var predictsTurns: Bool { get }
     /// No more audio. Ends `results`.
     func finish() async
 }
@@ -64,7 +71,10 @@ public protocol Voice: AnyObject {
     func speak(_ text: String, to out: SpeechOutput) async throws
 }
 
-public extension SpeechRecognizer { func prepare() async throws {} }
+public extension SpeechRecognizer {
+    func prepare() async throws {}
+    var predictsTurns: Bool { false }
+}
 public extension ReplyModel {
     func prepare() async throws {}
     var events: AsyncStream<ModelEvent>? { nil }
@@ -128,6 +138,7 @@ public enum Engines {
     /// `engines.stt`
     public static let recognizers: [String: Factory<SpeechRecognizer>] = [
         "apple": { AppleSpeechRecognizer(locale: Locale(identifier: $0.locale)) },
+        "elevenlabs": { try ElevenLabsSpeechRecognizer(settings: $0) },
     ]
 
     /// `engines.llm`

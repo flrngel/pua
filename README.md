@@ -181,7 +181,8 @@ it answered in about 1.5 seconds. The protocols, example agents and a note on Pi
 ## Private by default
 
 * **On your Mac:** the built-in AI's speech recognition and language model run on the Mac. The
-  conversation does not leave it.
+  conversation does not leave it, unless you pick ElevenLabs speech recognition
+  (`--stt elevenlabs`) for faster replies: then the caller's audio goes to ElevenLabs.
 * **Only when you ask:** pua answers calls only while `pua listen` is running, and records only
   when you ask it to (`--record`).
 * **Honest with callers:** the AI tells callers it is an AI, and that the call is recorded when

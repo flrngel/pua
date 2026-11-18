@@ -78,6 +78,7 @@ The mechanism and its evidence are in [ANALYSIS.md](../../ANALYSIS.md). Android 
 | 0.5.0 `pua stream ws://127.0.0.1:…` against a local test server and a scripted caller | `connected`, `start` (μ-law 8 kHz); caller `media` at 50/s, 160 bytes each, speech present; `mark` after 1 s of audio came back at 1.04 s; `clear` returned the pending mark in 0.01 s; server close ended the session (`stream_closed`) and the recording was written |
 | Live incoming call with `pua listen --once --answer-after 3 --record --exec "python3 examples/agents/clock_agent.py"` (2026-11-16, 0.5.0) | Caller name read from the banner (`ringing` and the agent's `call_start`); answered (AX) 1.4 s after Accept; the agent told the time correctly; 4 caller turns, reply gap median 1.55 s (max 1.57 s); "Goodbye." → agent goodbye, pua hung up (`agent_hung_up`, 43.7 s); mic restored |
 | 0.5.0 `pua stream` against `examples/agents/stream_echo.py` | Caller phrase at 0.4 s echoed back from 2.4 s; `mark` returned; `stop` sent at `--max-seconds` |
+| 0.7.0 offline A/B: `pua converse --exec "python3 examples/agents/clock_agent.py" --tts system` against one scripted caller (no phone), `--stt apple` vs `--stt elevenlabs` | Same three answers and `agent_hung_up` in both. Reply gap median 2.23 s (max 2.28 s) with `apple`; 0.96 s (max 1.18 s) with `elevenlabs` (Scribe v3 Live, turn prediction) |
 | VoiceProcessingIO on `PUA Call Mic` while `audio-stream` plays the demo (no call) | Driver 0.1: −61 then −86 to −138 dBFS (cancelled). Driver 0.2: −13 to −34 dBFS for the whole clip. |
 
 ## Known gaps
